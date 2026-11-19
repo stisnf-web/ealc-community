@@ -665,7 +665,7 @@ pre.codeblock{
         <button type="button" onclick="App.demoLogin('moderator@demo.com')"><i class="fa-solid fa-user-gear"></i> moderator@demo.com</button>
         <button type="button" onclick="App.demoLogin('member@demo.com')"><i class="fa-solid fa-user"></i> member@demo.com</button>
       </div>
-      <p class="muted" style="margin-top:.5rem">Passwords: admin123 / mod123 / member123.
+      <p class="muted" id="loginNote" style="margin-top:.5rem">Passwords: admin123 / mod123 / member123.
       This login is <strong>for demonstration only</strong> — data is stored in your browser (localStorage).
       Production authentication should use Supabase Auth (see Settings &rarr; Supabase).</p>
       <button type="button" class="btn btn-ghost btn-block" style="margin-top:.6rem" onclick="App.resetDemoData()"><i class="fa-solid fa-rotate-left"></i> Reset Data Demo</button>
@@ -1539,6 +1539,20 @@ const chartColors = () => ({
      - Token akses di-refresh otomatis saat mendekati kedaluwarsa.
    Keamanan: hanya anon key (publik, dilindungi RLS) dipakai di frontend.
    ============================================================ */
+
+/* ------------------------------------------------------------
+   KONFIGURASI BAWAAN APLIKASI (untuk deployment publik)
+   Isi dua nilai di bawah agar SEMUA pengunjung tautan publik
+   (mis. GitHub Pages) langsung Mode Online tanpa mengisi Settings.
+   Contoh:
+     const SB_DEFAULT_URL      = 'https://abcdxyz.supabase.co';
+     const SB_DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIs...';
+   Hanya anon key — aman dipublikasikan karena dilindungi RLS.
+   Biarkan '' (kosong) agar aplikasi berjalan mode demo bawaan.
+   ------------------------------------------------------------ */
+const SB_DEFAULT_URL = '';
+const SB_DEFAULT_ANON_KEY = '';
+
 const SB = {
   ready: false,          // true setelah pull awal berhasil (boleh push)
   session: null,         // { access, refresh, expiresAt, userId, email }
@@ -1558,7 +1572,11 @@ const SB = {
   },
   cfg() {
     const st = S.settings || {};
-    return { url: (st.supabaseUrl || '').replace(/\/+$/, ''), key: st.supabaseAnonKey || '' };
+    /* Kredensial per perangkat (Settings) menang; jika kosong, pakai
+       konfigurasi bawaan yang tertanam di atas (deployment publik). */
+    const url = st.supabaseUrl || SB_DEFAULT_URL || '';
+    const key = st.supabaseAnonKey || SB_DEFAULT_ANON_KEY || '';
+    return { url: url.replace(/\/+$/, ''), key };
   },
   on() { const c = SB.cfg(); return !!(c.url && c.key); },
 
@@ -3880,6 +3898,7 @@ function clearAllNotifs() {
 RENDERERS.settings = function (el) {
   const st = S.settings;
   const sbConfigured = !!(st.supabaseUrl && st.supabaseAnonKey);
+  const sbDefault = !!(typeof SB_DEFAULT_URL !== 'undefined' && SB_DEFAULT_URL && SB_DEFAULT_ANON_KEY);
   el.innerHTML = `
     <div class="page-head">
       <h2><i class="fa-solid fa-gear"></i> Settings</h2>
@@ -3951,9 +3970,11 @@ RENDERERS.settings = function (el) {
           <div id="sbStatusBox">
             ${sbConfigured
               ? '<div class="ok-note mb-2"><i class="fa-solid fa-circle-check"></i><span>Terisi. URL: <strong>' + esc(st.supabaseUrl) + '</strong>. Klik "Test Connection" untuk memverifikasi skema.</span></div>'
-              : '<div class="info-note mb-2"><i class="fa-solid fa-circle-info"></i><span>Belum dikonfigurasi. Isi kredensial project Supabase Anda (dari Dashboard &rarr; Settings &rarr; API). Skema database sudah tersedia di file <strong>supabase_schema.sql</strong>.</span></div>'}
+              : sbDefault
+                ? '<div class="ok-note mb-2"><i class="fa-solid fa-cloud"></i><span>Mode Online aktif memakai <strong>konfigurasi bawaan</strong> yang tertanam di index.html. Isi form di bawah hanya jika ingin memakai project Supabase lain di perangkat ini.</span></div>'
+                : '<div class="info-note mb-2"><i class="fa-solid fa-circle-info"></i><span>Belum dikonfigurasi. Isi kredensial project Supabase Anda (dari Dashboard &rarr; Settings &rarr; API). Skema database sudah tersedia di file <strong>supabase_schema.sql</strong>.</span></div>'}
           </div>
-          ${sbConfigured ? `<div class="flex-between mb-2" style="font-size:.78rem" id="sbSyncInfo">Sinkron terakhir: ${esc(SB.fmtTime(SB.lastSync))} &middot; Mode: <strong>${SB.ready ? 'Online (aktif)' : 'Menunggu login ulang'}</strong></div>
+          ${(sbConfigured || sbDefault) ? `<div class="flex-between mb-2" style="font-size:.78rem" id="sbSyncInfo">Sinkron terakhir: ${esc(SB.fmtTime(SB.lastSync))} &middot; Mode: <strong>${SB.ready ? 'Online (aktif)' : 'Menunggu login ulang'}</strong></div>
           <div class="flex mb-2">
             <button type="button" class="btn btn-ghost btn-sm" onclick="App.syncNow()"><i class="fa-solid fa-rotate"></i> Sync sekarang</button>
           </div>` : ''}
@@ -3961,14 +3982,15 @@ RENDERERS.settings = function (el) {
             <div class="form-group"><label>Project URL</label><input class="form-control" id="sbUrl" placeholder="https://xxxx.supabase.co" value="${escAttr(st.supabaseUrl)}"></div>
             <div class="form-group"><label>Anon (public) key</label><input class="form-control" id="sbKey" placeholder="eyJhbGciOi..." value="${escAttr(st.supabaseAnonKey)}"></div>
             <div class="warn-note mb-2"><i class="fa-solid fa-shield-halved"></i><span><strong>Amankan ke GitHub:</strong> hanya <em>anon key</em> (public) yang boleh ada di frontend &mdash; dilindungi RLS. <strong>Jangan pernah</strong> menyimpan service_role key di aplikasi ini.</span></div>
-            <div class="flex">
+            <div class="flex" style="flex-wrap:wrap">
               <button class="btn btn-primary btn-sm"><i class="fa-solid fa-floppy-disk"></i> Save</button>
               <button type="button" class="btn btn-ghost btn-sm" onclick="App.testSupabase()"><i class="fa-solid fa-plug-circle-bolt"></i> Test Connection</button>
+              ${(sbConfigured || sbDefault) ? '<button type="button" class="btn btn-ghost btn-sm" onclick="App.shareSupabaseLink()" title="Buat tautan berbagi yang langsung Mode Online"><i class="fa-solid fa-share-nodes"></i> Tautan Berbagi</button>' : ''}
               ${sbConfigured ? '<button type="button" class="btn btn-danger btn-sm" onclick="App.clearSupabase()"><i class="fa-solid fa-link-slash"></i> Clear</button>' : ''}
             </div>
           </form>
           <div class="divider"></div>
-          <p class="small muted">Mode Online: login &amp; pendaftaran memakai Supabase Auth, seluruh tabel komunitas (postingan, komentar, likes, kosakata, kuis, tantangan, event, notifikasi, poin) tersinkron otomatis antar perangkat. Admin mengubah role/poin via RPC; kolom proteksi RLS tetap aktif.</p>
+          <p class="small muted">Mode Online: login &amp; pendaftaran memakai Supabase Auth, seluruh tabel komunitas (postingan, komentar, likes, kosakata, kuis, tantangan, event, notifikasi, poin) tersinkron otomatis antar perangkat. Admin mengubah role/poin via RPC; kolom proteksi RLS tetap aktif. Tombol <strong>Tautan Berbagi</strong> membuat URL berisi koneksi (anon key memang publik &amp; dilindungi RLS) &mdash; siapa pun yang membukanya langsung Mode Online tanpa mengisi Settings.</p>
         </div>
 
         <div class="card setting-group">
@@ -4119,7 +4141,11 @@ function testSupabase() {
   }
 }
 function clearSupabase() {
-  confirmDialog('Clear Supabase config', 'Hapus konfigurasi Supabase dari perangkat ini? Aplikasi kembali ke mode lokal (demo).', () => {
+  const baked = typeof SB_DEFAULT_URL !== 'undefined' && !!(SB_DEFAULT_URL && SB_DEFAULT_ANON_KEY);
+  confirmDialog('Clear Supabase config',
+    'Hapus konfigurasi Supabase dari perangkat ini? ' +
+    (baked ? 'Catatan: aplikasi memakai konfigurasi bawaan yang tertanam, jadi Mode Online tetap aktif.' : 'Aplikasi kembali ke mode lokal (demo).'),
+    () => {
     S.settings.supabaseUrl = '';
     S.settings.supabaseAnonKey = '';
     DB.set('settings', S.settings);
@@ -4560,18 +4586,77 @@ function openMoreDrawer() {
 }
 function closeDrawer() { $('#drawerHost').innerHTML = ''; }
 
+/* ---------------- Tautan berbagi (Mode Online otomatis) ----------------
+   Koneksi Supabase tersimpan di localStorage tiap perangkat, sehingga
+   pengunjung baru membuka tautan publik dalam mode demo. Dua solusinya:
+   1. Tombol "Tautan Berbagi" di Settings — membuat URL berisi koneksi
+      (URL + anon key, memang publik & dilindungi RLS) pada fragment #sb=...
+      Siapa pun yang membukanya langsung Mode Online.
+   2. Konstanta SB_DEFAULT_URL / SB_DEFAULT_ANON_KEY di p05b (tertanam). */
+function shareSupabaseLink() {
+  const c = SB.cfg();
+  if (!c.url || !c.key) { toast('warning', 'Belum dikonfigurasi', 'Isi Project URL dan anon key Supabase terlebih dahulu.'); return; }
+  let payload = '';
+  try {
+    payload = btoa(JSON.stringify({ u: c.url, k: c.key }))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  } catch (e) { /* bukan Latin1 — tidak mungkin untuk URL/key */ }
+  if (!payload) { toast('error', 'Gagal', 'Koneksi tidak dapat dikodekan ke tautan.'); return; }
+  const link = location.origin + location.pathname + location.search + '#sb=' + payload;
+  const copyFallback = () => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link)
+        .then(() => toast('success', 'Tautan berbagi tersalin', 'Tempel di grup WA/Discord — siapa pun yang membukanya langsung Mode Online.'))
+        .catch(() => window.prompt('Salin tautan berbagi ini (Ctrl+C):', link));
+    } else window.prompt('Salin tautan berbagi ini (Ctrl+C):', link);
+  };
+  if (navigator.share) {
+    navigator.share({ title: (S.settings && S.settings.communityName) || 'English Arabic Language Community', url: link })
+      .then(() => toast('info', 'Tautan dibagikan', 'Penerima akan langsung masuk Mode Online.'))
+      .catch(() => copyFallback());
+  } else copyFallback();
+}
+/* Terapkan koneksi dari #sb=... (tautan berbagi). Dipanggil di init() sebelum
+   badge mode dirender; hash dibersihkan setelah config disimpan. */
+function applyShareLinkConfig() {
+  const m = (location.hash || '').match(/^#sb=([A-Za-z0-9\-_]+)$/);
+  if (m) {
+    try {
+      let b = m[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (b.length % 4) b += '=';
+      const d = JSON.parse(atob(b));
+      const url = String(d.u || '').replace(/\/+$/, '');
+      const key = String(d.k || '');
+      const same = S.settings.supabaseUrl === url && S.settings.supabaseAnonKey === key;
+      if (/^https:\/\/.+/.test(url) && key.length > 20 && !same) {
+        S.settings.supabaseUrl = url;
+        S.settings.supabaseAnonKey = key;
+        DB.set('settings', S.settings);
+        toast('success', 'Mode Online diaktifkan', 'Koneksi Supabase dimuat dari tautan berbagi.');
+      }
+    } catch (e) { /* tautan tidak valid — abaikan, tetap pakai mode sebelumnya */ }
+  }
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+}
+
 /* ---------------- Init ---------------- */
 function renderModeBadge() {
   const el = $('#loginMode');
-  if (!el) return;
-  el.innerHTML = SB.on()
-    ? '<span style="display:inline-block;background:#ECFDF5;color:#047857;border:1px solid #A7F3D0;padding:.18rem .9rem;border-radius:99px;font-size:.72rem;font-weight:600"><i class="fa-solid fa-cloud"></i> Mode Online — Supabase</span>'
-    : '<span style="display:inline-block;background:#F1F5F9;color:#475569;border:1px solid #E2E8F0;padding:.18rem .9rem;border-radius:99px;font-size:.72rem;font-weight:600"><i class="fa-solid fa-laptop"></i> Mode Lokal (Demo)</span>';
+  if (el) {
+    el.innerHTML = SB.on()
+      ? '<span style="display:inline-block;background:#ECFDF5;color:#047857;border:1px solid #A7F3D0;padding:.18rem .9rem;border-radius:99px;font-size:.72rem;font-weight:600"><i class="fa-solid fa-cloud"></i> Mode Online — Supabase</span>'
+      : '<span style="display:inline-block;background:#F1F5F9;color:#475569;border:1px solid #E2E8F0;padding:.18rem .9rem;border-radius:99px;font-size:.72rem;font-weight:600"><i class="fa-solid fa-laptop"></i> Mode Lokal (Demo)</span>';
+  }
+  const note = $('#loginNote');
+  if (note) note.innerHTML = SB.on()
+    ? 'Passwords: admin123 / mod123 / member123. Login dijalankan lewat <strong>Supabase Auth</strong> — data tersinkron otomatis antar perangkat. Akun demo di bawah bisa langsung dipakai.'
+    : 'Passwords: admin123 / mod123 / member123. This login is <strong>for demonstration only</strong> — data is stored in your browser (localStorage). Production authentication should use Supabase Auth (see Settings &rarr; Supabase).';
 }
 function init() {
   seedIfNeeded();
   S.settings = DB.get('settings', null) || buildSeed().settings;
   DB.set('settings', S.settings);
+  applyShareLinkConfig();
   applySettings();
   renderModeBadge();
   const u = sessionLoad();
@@ -4617,7 +4702,7 @@ window.App = {
   updateProfile, uploadAvatar, changePassword,
   aiAsk, sendAI,
   saveIdentity, uploadLogo, resetLogo, setThemeMode, setAccent, customColor, toggleFeature, savePoints,
-  saveSupabase, testSupabase, clearSupabase, exportData, importData, resetData,
+  saveSupabase, testSupabase, clearSupabase, shareSupabaseLink, exportData, importData, resetData,
   adminTab: (t) => { S.adminTab = t; renderAdminTab(); },
   adminSetRole, adminAddPointsBtn, adminAddPointsSave, adminToggleActive, adminDeleteUser, deletePostAdmin,
   openAchForm: achForm, submitAch, deleteAch,
