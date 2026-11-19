@@ -1264,19 +1264,29 @@ create policy "speaking_owner_delete" on storage.objects
 -- ============================================================================
 
 -- 9.1  AKUN DEMO (schema auth milik Supabase — password bcrypt siap pakai)
+--
+--  PENTING: kolom `id` di auth.users TIDAK punya nilai default (Supabase Auth
+--  selalu mengisi UUID dari sisi aplikasi), jadi id WAJIB diisi eksplisit.
+--  Memakai UUID tetap juga membuat seed idempoten: menjalankan ulang skrip
+--  tidak mengubah identitas akun (email unik + on conflict do nothing).
+--  aud & role diisi 'authenticated' persis seperti akun yang dibuat lewat
+--  Dashboard/Auth Admin Supabase.
 insert into auth.users
-  (email, encrypted_password, email_confirmed_at,
+  (id, aud, role, email, encrypted_password, email_confirmed_at,
    raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
-  ('admin@demo.com',
+  ('00000000-0000-4000-8000-000000000001'::uuid, 'authenticated', 'authenticated',
+   'admin@demo.com',
    '$2a$10$wd0dmOIGSXToFRoQQABkDeCt3w08HqBPgpsnBMQhutBpBbXMQatjC',  -- admin123
    now(), '{"provider":"email","providers":["email"]}',
    '{"full_name":"Ahmad Fauzi"}', now(), now()),
-  ('moderator@demo.com',
+  ('00000000-0000-4000-8000-000000000002'::uuid, 'authenticated', 'authenticated',
+   'moderator@demo.com',
    '$2a$10$.sJT9Afvu5i7EBZDdAaRHO8F8nroUldUvZKmz4VUThSlmKcV10lKi',  -- mod123
    now(), '{"provider":"email","providers":["email"]}',
    '{"full_name":"Siti Rahma"}', now(), now()),
-  ('member@demo.com',
+  ('00000000-0000-4000-8000-000000000003'::uuid, 'authenticated', 'authenticated',
+   'member@demo.com',
    '$2a$10$93eufRPRFHzfgwpAw/taHe6Ly7EsT8hBhL/K5dp3I1S23OfmO.Yg2',  -- member123
    now(), '{"provider":"email","providers":["email"]}',
    '{"full_name":"Budi Santoso"}', now(), now())

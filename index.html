@@ -11,7 +11,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<!-- supabase-js dipin ke versi tetap agar protokol realtime konsisten
+     (tag @2 melayang memuat versi terbaru yang bisa berubah perilaku) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <style>
 /* ============================================================
    ENGLISH ARABIC LANGUAGE COMMUNITY — Design System
@@ -114,7 +116,7 @@ input,select,textarea{font-family:inherit;font-size:inherit}
   padding:.65rem 1.4rem;display:flex;align-items:center;gap:1rem;min-height:60px;
 }
 .tb-hamburger{display:none;background:none;border:none;font-size:1.2rem;color:var(--text);padding:.35rem}
-#pageTitle{font-size:1.05rem;font-weight:700}
+#pageTitle{font-size:1.05rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .tb-right{margin-left:auto;display:flex;align-items:center;gap:.55rem}
 .tb-iconbtn{
   position:relative;background:var(--card-2);border:1px solid var(--line);color:var(--text);
@@ -341,7 +343,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.85rem;min-width:640px}
 .post-author .pa-name{font-weight:700;font-size:.9rem}
 .post-author .pa-meta{font-size:.72rem;color:var(--muted)}
 .post-title{font-size:1.02rem;font-weight:700;margin-bottom:.4rem}
-.post-content{font-size:.88rem;color:var(--text);white-space:pre-wrap}
+.post-content{font-size:.88rem;color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
 .post-actions{display:flex;gap:1.1rem;margin-top:.8rem;padding-top:.7rem;border-top:1px solid var(--line)}
 .post-actions button{
   background:none;border:none;color:var(--muted);font-size:.82rem;font-weight:600;display:flex;
@@ -628,6 +630,7 @@ pre.codeblock{
   .form-row{grid-template-columns:1fr}
   .user-chip .uc-name{display:none}
   #pageTitle{font-size:.95rem}
+  .topbar{padding:.65rem 1rem;gap:.7rem}
   .hero h1{font-size:1.2rem}
   .sb-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:59}
 }
@@ -2761,16 +2764,18 @@ const VideoRoom = {
     }
     // P2P
     this.peers.clear();
-    this.bus = this.makeBus(code, (msg) => this.onSignal(msg));
+    const announce = () => {
+      try { this.bus.send({ type: 'join', from: this.selfId, name: S.user.fullName, joinedAt: this.joinedAt }); } catch (e) {}
+      this.status('connected', this.bus.kind === 'supabase'
+        ? 'P2P aktif via Supabase Realtime — tunggu anggota lain masuk dengan kode yang sama.'
+        : 'P2P aktif via BroadcastChannel — buka aplikasi di tab kedua dan join room yang sama.');
+    };
+    this.bus = this.makeBus(code, (msg) => this.onSignal(msg), announce);
     if (!this.bus) {
       this.status('off', 'Signaling tidak tersedia: isi Supabase di Settings atau gunakan browser modern.');
       this.renderControls(true);
       return;
     }
-    this.bus.send({ type: 'join', from: this.selfId, name: S.user.fullName, joinedAt: this.joinedAt });
-    this.status('connected', this.bus.kind === 'supabase'
-      ? 'P2P aktif via Supabase Realtime — tunggu anggota lain masuk dengan kode yang sama.'
-      : 'P2P aktif via BroadcastChannel — buka aplikasi di tab kedua dan join room yang sama.');
     this.renderControls();
     window.addEventListener('beforeunload', () => { try { this.bus && this.bus.send({ type: 'leave', from: this.selfId }); } catch (e) {} });
   },
@@ -2780,19 +2785,25 @@ const VideoRoom = {
     el.classList.toggle('connected', state === 'connected');
     if (tx) tx.innerHTML = text;
   },
-  makeBus(room, onMsg) {
+  makeBus(room, onMsg, onReady) {
     try {
       if (window.supabase && S.settings.supabaseUrl && S.settings.supabaseAnonKey) {
         const client = window.supabase.createClient(S.settings.supabaseUrl, S.settings.supabaseAnonKey);
         const channel = client.channel('ealc-vr-' + room, { config: { broadcast: { self: false } } });
         channel.on('broadcast', { event: 'sig' }, (msg) => { if (msg.payload && msg.payload.from !== this.selfId) onMsg(msg.payload); });
-        channel.subscribe();
+        /* Tunggu channel benar-benar SUBSCRIBED sebelum sinyal pertama dikirim;
+           tanpa ini sinyal join/offer awal bisa jatuh ke jalur REST broadcast
+           (atau hilang pada server yang tidak menyediakan fallback). */
+        channel.subscribe((status) => {
+          if (status === 'SUBSCRIBED' && onReady) { try { onReady(); } catch (e) {} }
+        });
         return { kind: 'supabase', send: (p) => { try { channel.send({ type: 'broadcast', event: 'sig', payload: p }); } catch (e) {} },
                  leave: () => { try { client.removeChannel(channel); } catch (e) {} } };
       }
       if ('BroadcastChannel' in window) {
         const bc = new BroadcastChannel('ealc-vr-' + room);
         bc.onmessage = (e) => { if (e.data && e.data.from !== this.selfId) onMsg(e.data); };
+        if (onReady) setTimeout(() => { try { onReady(); } catch (e) {} }, 0);
         return { kind: 'broadcast', send: (p) => { try { bc.postMessage(p); } catch (e) {} }, leave: () => { try { bc.close(); } catch (e) {} } };
       }
     } catch (e) { /* fallthrough */ }
@@ -2847,7 +2858,10 @@ const VideoRoom = {
     this.peers.set(peerId, p);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    this.bus.send({ type: 'sdp-offer', from: this.selfId, to: peerId, sdp: pc.localDescription });
+    /* Kirim SDP sebagai objek polos: RTCSessionDescription tidak bisa
+       di-structured-clone (BroadcastChannel) dan pada browser yang menyimpan
+       propertinya di prototype, JSON.stringify-nya menjadi "{}". */
+    this.bus.send({ type: 'sdp-offer', from: this.selfId, to: peerId, sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
   },
   async handleOffer(msg) {
     let p = this.peers.get(msg.from);
@@ -2859,7 +2873,7 @@ const VideoRoom = {
     await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-    this.bus.send({ type: 'sdp-answer', from: this.selfId, to: msg.from, sdp: pc.localDescription });
+    this.bus.send({ type: 'sdp-answer', from: this.selfId, to: msg.from, sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
     this.updatePeerCount();
   },
   createPC(peerId) {
@@ -3006,7 +3020,7 @@ const VideoRoom = {
     stage.innerHTML = `
       <div class="vr-status"><span class="vr-ss-dot" style="background:var(--emerald)"></span> Group Room via Jitsi Meet &mdash; room <strong>${esc(code)}</strong></div>
       <iframe src="${escAttr(url)}" allow="camera; microphone; fullscreen; display-capture; autoplay"
-        style="width:100%;height:520px;border:1px solid var(--line);border-radius:14px;margin:.8rem 0"></iframe>
+        style="width:100%;height:min(62vh,520px);border:1px solid var(--line);border-radius:14px;margin:.8rem 0"></iframe>
       <div class="flex" style="justify-content:center;gap:.6rem">
         <a class="btn btn-ghost btn-sm" href="${escAttr(url)}" target="_blank" rel="noopener"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open in new tab</a>
         <button class="btn btn-danger btn-sm" onclick="App.vrLeave()"><i class="fa-solid fa-phone-slash"></i> Leave</button>
