@@ -474,6 +474,13 @@ table.tbl{width:100%;border-collapse:collapse;font-size:.85rem;min-width:640px}
 }
 .vr-status .vr-ss-dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
 .vr-status.connected .vr-ss-dot{background:var(--emerald);animation:pulse 1.6s infinite}
+.vr-roomcode{
+  display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;justify-content:center;
+  background:var(--emerald-soft);border:1px dashed var(--emerald);border-radius:.6rem;
+  padding:.45rem .8rem;margin:.5rem 0 .2rem;font-size:.8rem;color:var(--text,#1B2A4A);
+}
+.vr-roomcode strong{letter-spacing:.6px}
+.vr-roomhint{color:var(--muted);font-size:.72rem}
 .mode-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem}
 .mode-card{
   border:1.5px solid var(--line);border-radius:14px;padding:.95rem;text-align:left;background:var(--card);
@@ -2700,7 +2707,7 @@ const VideoRoom = {
   open: false, mode: null, code: '',
   localStream: null, screenStream: null,
   peers: new Map(),       // id -> {name, joinedAt, pc, tileEl}
-  bus: null, joinedAt: 0, selfId: null,
+  bus: null, joinedAt: 0, selfId: null, pingInt: null,
   micOn: true, camOn: true,
   recorder: null, chunks: [], recording: false, timerInt: null, sec: 0,
 
@@ -2710,7 +2717,7 @@ const VideoRoom = {
     /* Preset (mis. diklik kartu "Group Room" di halaman Speaking) langsung
        dipakai sebagai mode aktif — bukan hanya sorotan visual. */
     this.mode = presetMode || null;
-    const sbConfigured = !!(window.supabase && S.settings && S.settings.supabaseUrl && S.settings.supabaseAnonKey);
+    const sbConfigured = !!(window.supabase && SB.on());
     const bcOk = 'BroadcastChannel' in window;
     openModal(modalShell(
       `<i class="fa-solid fa-video" style="color:var(--gold)"></i> Video Room`,
@@ -2721,14 +2728,17 @@ const VideoRoom = {
             <i class="fa-solid fa-user"></i><h5>Solo Practice</h5><p>Privat. Kamera + rekaman video + snapshot untuk evaluasi pelafalan dan ekspresi.</p></button>
           <button class="mode-card ${presetMode === 'p2p' ? 'selected' : ''}" data-mode="p2p" onclick="App.vrPickMode('p2p')">
             <i class="fa-solid fa-people-arrows"></i><h5>P2P Call ${sbConfigured ? '' : bcOk ? '(tab demo)' : ''}</h5>
-            <p>${sbConfigured ? 'Supabase Realtime terhubung — panggilan lintas perangkat aktif.' : bcOk ? 'Belum ada Supabase: uji dulu dengan 2 tab browser di perangkat yang sama. Isi koneksi Supabase di Settings untuk lintas perangkat.' : 'Browser tidak mendukung BroadcastChannel dan Supabase belum diisi.'}</p></button>
+            <p>${sbConfigured ? 'Supabase Realtime terhubung — panggilan lintas perangkat aktif. Pakai kode yang SAMA di semua perangkat.' : bcOk ? 'Belum ada Supabase: uji dulu dengan 2 tab browser di perangkat yang sama. Isi koneksi Supabase di Settings untuk lintas perangkat.' : 'Browser tidak mendukung BroadcastChannel dan Supabase belum diisi.'}</p></button>
           <button class="mode-card ${presetMode === 'jitsi' ? 'selected' : ''}" data-mode="jitsi" onclick="App.vrPickMode('jitsi')">
             <i class="fa-solid fa-users"></i><h5>Group Room</h5><p>Jitsi Meet: grup besar, screen share, chat. Server publik dibatasi 95 menit/rapat.</p></button>
         </div>
         <div class="form-group mt-2" style="margin-bottom:0">
           <label>Room code</label>
-          <input class="form-control" id="vrCode" value="${escAttr(this.code || this.suggestCode())}" maxlength="40">
-          <div class="form-hint">Anggota lain masuk room yang sama dengan kode yang identik.</div>
+          <div class="flex" style="flex-wrap:wrap">
+            <input class="form-control" id="vrCode" style="flex:1;min-width:0" value="${escAttr(this.code || DB.get('vrLastCode', '') || this.suggestCode())}" maxlength="40">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="App.vrCopyCode()" title="Salin kode"><i class="fa-solid fa-copy"></i></button>
+          </div>
+          <div class="form-hint"><strong>Kode harus SAMA PERSIS</strong> di semua perangkat yang ingin saling bertatap muka. Kode default berbeda tiap akun (privasi) &mdash; salin kode dari perangkat pertama ke perangkat kedua, atau sepakati kode sendiri (mis. <code>KELAS-A1</code>).</div>
         </div>
       </div>
       <div id="vrStage" class="hidden"></div>`,
@@ -2753,6 +2763,7 @@ const VideoRoom = {
     const code = ($('#vrCode').value || '').trim();
     if (!code) { toast('warning', 'Room code kosong', 'Isi kode ruang terlebih dahulu.'); return; }
     this.code = code;
+    DB.set('vrLastCode', code); /* kode terakhir — memudahkan pertemuan rutin */
     if (!this.mode) this.mode = 'solo';
     if (this.mode === 'jitsi') return this.joinJitsi(code);
     const stage = $('#vrStage'), stepMode = $('#vrStepMode');
@@ -2761,6 +2772,9 @@ const VideoRoom = {
     stage.classList.remove('hidden');
     stage.innerHTML = `
       <div class="vr-status" id="vrStatus"><span class="vr-ss-dot"></span> <span id="vrStatusText">Meminta izin kamera &amp; mikrofon...</span></div>
+      ${this.mode === 'p2p' ? `<div class="vr-roomcode"><i class="fa-solid fa-key"></i> <span>Kode room:</span> <strong>${esc(code)}</strong>
+        <button type="button" class="btn btn-ghost btn-xs" onclick="App.vrCopyCode()"><i class="fa-solid fa-copy"></i> Salin</button>
+        <span class="vr-roomhint">&mdash; berikan kode ini ke teman Anda agar bisa bertatap muka</span></div>` : ''}
       <div class="video-grid" id="vrGrid"></div>
       <div class="vr-controls" id="vrCtrls"></div>
       <div class="center small muted" id="vrRecRow"></div>`;
@@ -2785,8 +2799,8 @@ const VideoRoom = {
     const announce = () => {
       try { this.bus.send({ type: 'join', from: this.selfId, name: S.user.fullName, joinedAt: this.joinedAt }); } catch (e) {}
       this.status('connected', this.bus.kind === 'supabase'
-        ? 'P2P aktif via Supabase Realtime — tunggu anggota lain masuk dengan kode yang sama.'
-        : 'P2P aktif via BroadcastChannel — buka aplikasi di tab kedua dan join room yang sama.');
+        ? 'P2P aktif via Supabase Realtime — bagikan kode di atas ke teman Anda (harus sama persis), lalu tunggu.'
+        : 'P2P aktif via BroadcastChannel — buka tab kedua dan join dengan kode yang sama.');
     };
     this.bus = this.makeBus(code, (msg) => this.onSignal(msg), announce);
     if (!this.bus) {
@@ -2795,6 +2809,7 @@ const VideoRoom = {
       return;
     }
     this.renderControls();
+    this.startPresence();
     window.addEventListener('beforeunload', () => { try { this.bus && this.bus.send({ type: 'leave', from: this.selfId }); } catch (e) {} });
   },
   status(state, text) {
@@ -2805,8 +2820,9 @@ const VideoRoom = {
   },
   makeBus(room, onMsg, onReady) {
     try {
-      if (window.supabase && S.settings.supabaseUrl && S.settings.supabaseAnonKey) {
-        const client = window.supabase.createClient(S.settings.supabaseUrl, S.settings.supabaseAnonKey);
+      const c = SB.cfg();
+      if (window.supabase && c.url && c.key) {
+        const client = window.supabase.createClient(c.url, c.key);
         const channel = client.channel('ealc-vr-' + room, { config: { broadcast: { self: false } } });
         channel.on('broadcast', { event: 'sig' }, (msg) => { if (msg.payload && msg.payload.from !== this.selfId) onMsg(msg.payload); });
         /* Tunggu channel benar-benar SUBSCRIBED sebelum sinyal pertama dikirim;
@@ -2827,25 +2843,46 @@ const VideoRoom = {
     } catch (e) { /* fallthrough */ }
     return null;
   },
+  /* Tambah/refresh peserta di daftar peers + umpan balik visual. */
+  addPeer(id, name, joinedAt) {
+    const ex = this.peers.get(id);
+    if (ex) { ex.lastSeen = Date.now(); return ex; }
+    const p = { name: name || 'Member', joinedAt: joinedAt || Date.now(), pc: null, tile: null, lastSeen: Date.now() };
+    this.peers.set(id, p);
+    this.updatePeerCount();
+    toast('info', (p.name || 'Anggota') + ' ada di room', 'Menyiapkan koneksi video antar peserta...');
+    return p;
+  },
+  /* Kandidat ICE yang datang SEBELUM setRemoteDescription selesai tidak
+     boleh dibuang (dulu di-swallow catch -> koneksi lintas jaringan bisa
+     gagal). Buffer lalu flush begitu remote description terpasang. */
+  flushIce(pc) {
+    if (!pc) return;
+    const buf = pc.__iceBuf || [];
+    pc.__iceBuf = [];
+    buf.forEach(c => { try { pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {}); } catch (e) {} });
+  },
   onSignal(msg) {
     if (!msg || !msg.from || msg.from === this.selfId) return;
     switch (msg.type) {
       case 'join': {
-        if (!this.peers.has(msg.from)) {
-          this.peers.set(msg.from, { name: msg.name || 'Member', joinedAt: msg.joinedAt || Date.now(), pc: null, tile: null });
-          this.updatePeerCount();
-          // I am older (or id tie-break) -> I initiate the offer
-          if (this.joinedAt < (msg.joinedAt || 0) || (this.joinedAt === msg.joinedAt && this.selfId < msg.from)) {
-            this.callPeer(msg.from);
-          }
-          this.bus.send({ type: 'announce', from: this.selfId, name: S.user.fullName, joinedAt: this.joinedAt, to: msg.from });
+        const p = this.addPeer(msg.from, msg.name, msg.joinedAt);
+        // Saya lebih dulu masuk (atau tie-break id) -> saya yang memulai offer
+        if (!p.pc && (this.joinedAt < (p.joinedAt || 0) || (this.joinedAt === p.joinedAt && this.selfId < msg.from))) {
+          this.callPeer(msg.from);
         }
+        this.bus.send({ type: 'announce', from: this.selfId, name: S.user.fullName, joinedAt: this.joinedAt });
         break;
       }
       case 'announce': {
-        if (!this.peers.has(msg.from)) {
-          this.peers.set(msg.from, { name: msg.name || 'Member', joinedAt: msg.joinedAt || Date.now(), pc: null, tile: null });
-          this.updatePeerCount();
+        this.addPeer(msg.from, msg.name, msg.joinedAt);
+        break;
+      }
+      case 'ping': {
+        const p = this.addPeer(msg.from, msg.name, msg.joinedAt);
+        // Jaring pengaman: bila join/announce terlewat, ping tetap menyatukan
+        if (!p.pc && (this.joinedAt < (p.joinedAt || 0) || (this.joinedAt === p.joinedAt && this.selfId < msg.from))) {
+          this.callPeer(msg.from);
         }
         break;
       }
@@ -2857,12 +2894,17 @@ const VideoRoom = {
       case 'sdp-offer': this.handleOffer(msg); break;
       case 'sdp-answer': {
         const p = this.peers.get(msg.from);
-        if (p && p.pc) p.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)).catch(() => {});
+        if (p && p.pc) p.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp)).then(() => this.flushIce(p.pc)).catch(() => {});
         break;
       }
       case 'ice': {
         const p = this.peers.get(msg.from);
-        if (p && p.pc && msg.cand) p.pc.addIceCandidate(new RTCIceCandidate(msg.cand)).catch(() => {});
+        if (!p || !p.pc || !msg.cand) break;
+        if (p.pc.remoteDescription && p.pc.remoteDescription.type) {
+          p.pc.addIceCandidate(new RTCIceCandidate(msg.cand)).catch(() => {});
+        } else {
+          (p.pc.__iceBuf = p.pc.__iceBuf || []).push(msg.cand);
+        }
         break;
       }
     }
@@ -2871,7 +2913,7 @@ const VideoRoom = {
     if (this.peers.get(peerId) && this.peers.get(peerId).pc) return;
     const pc = this.createPC(peerId);
     this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
-    const p = this.peers.get(peerId) || { name: 'Member', joinedAt: Date.now(), tile: null };
+    const p = this.peers.get(peerId) || { name: 'Member', joinedAt: Date.now(), tile: null, lastSeen: Date.now() };
     p.pc = pc;
     this.peers.set(peerId, p);
     const offer = await pc.createOffer();
@@ -2879,16 +2921,18 @@ const VideoRoom = {
     /* Kirim SDP sebagai objek polos: RTCSessionDescription tidak bisa
        di-structured-clone (BroadcastChannel) dan pada browser yang menyimpan
        propertinya di prototype, JSON.stringify-nya menjadi "{}". */
-    this.bus.send({ type: 'sdp-offer', from: this.selfId, to: peerId, sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+    this.bus.send({ type: 'sdp-offer', from: this.selfId, to: peerId, name: S.user.fullName, sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
   },
   async handleOffer(msg) {
     let p = this.peers.get(msg.from);
-    if (!p) { p = { name: 'Member', joinedAt: 0, tile: null }; this.peers.set(msg.from, p); }
+    if (!p) p = this.addPeer(msg.from, msg.name, 0);
+    if (msg.name) p.name = msg.name;
     if (p.pc) { try { p.pc.close(); } catch (e) {} }
     const pc = this.createPC(msg.from);
     this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
     p.pc = pc;
     await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+    this.flushIce(pc);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     this.bus.send({ type: 'sdp-answer', from: this.selfId, to: msg.from, sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
@@ -2922,14 +2966,41 @@ const VideoRoom = {
       <div class="vt-label"><span class="vt-dot connecting"></span> ${esc(label)}</div>`;
     grid.appendChild(tile);
     const v = tile.querySelector('video');
-    if (stream) v.srcObject = stream;
+    if (stream) {
+      v.srcObject = stream;
+      const pr = v.play && v.play();
+      if (pr && pr.catch) pr.catch(() => {}); /* kebijakan autoplay browser */
+    }
     return tile;
   },
   updatePeerCount() {
     const n = 1 + this.peers.size;
     if (this.peers.size >= 4) toast('warning', 'Room ramai', 'P2P mesh idealnya maksimal 4 peserta. Untuk grup besar gunakan Group Room (Jitsi).');
-    this.status('connected', `Terhubung — ${n} peserta di room "${this.code}".`);
+    const names = [];
+    this.peers.forEach(p => names.push(p.name || 'Member'));
+    this.status('connected', n === 1
+      ? `Menunggu anggota lain masuk dengan kode "${this.code}"...`
+      : `Terhubung — ${n} peserta: Anda, ${esc(names.join(', '))}.`);
   },
+  /* Presence ringan: ping periodik supaya tiap sisi tahu siapa yang masih
+     di room (jalan di jalur signaling apa pun), + pembersihan peserta mati. */
+  startPresence() {
+    this.stopPresence();
+    this.pingInt = setInterval(() => {
+      try { this.bus && this.bus.send({ type: 'ping', from: this.selfId, name: S.user.fullName, joinedAt: this.joinedAt }); } catch (e) {}
+      const now = Date.now();
+      this.peers.forEach((p, id) => {
+        const alive = p.pc && ['new', 'connecting', 'connected'].includes(p.pc.connectionState);
+        if (!alive && p.lastSeen && now - p.lastSeen > 25000) {
+          if (p.pc) { try { p.pc.close(); } catch (e) {} }
+          if (p.tile) p.tile.remove();
+          this.peers.delete(id);
+          this.updatePeerCount();
+        }
+      });
+    }, 6000);
+  },
+  stopPresence() { if (this.pingInt) { clearInterval(this.pingInt); this.pingInt = null; } },
   renderControls(disabled) {
     const c = $('#vrCtrls');
     if (!c) return;
@@ -3053,6 +3124,7 @@ const VideoRoom = {
   },
   forceLeaveAll() {
     this.open = false;
+    this.stopPresence();
     this.peers.forEach(p => { if (p.pc) { try { p.pc.close(); } catch (e) {} } });
     this.peers.clear();
     if (this.bus) { try { this.bus.leave(); } catch (e) {} this.bus = null; }
@@ -3063,6 +3135,15 @@ const VideoRoom = {
     clearInterval(this.timerInt);
   }
 };
+
+/* Salin kode room ke clipboard (tombol di modal & di panggung room). */
+function vrCopyCode() {
+  const c = ($('#vrCode') && $('#vrCode').value.trim()) || VideoRoom.code || '';
+  if (!c) { toast('warning', 'Belum ada kode', 'Isi room code terlebih dahulu.'); return; }
+  const done = () => toast('success', 'Kode tersalin', 'Tempel di perangkat kedua pada kolom Room code Video Room.');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(c).then(done).catch(() => window.prompt('Salin kode room ini:', c));
+  else window.prompt('Salin kode room ini:', c);
+}
 
 /* ---------------- Daily Challenge ---------------- */
 RENDERERS.challenge = function (el) {
@@ -4693,7 +4774,7 @@ window.App = {
   spSampleFill, spPickSample, spToggleRecord, spAnalyze, spSave, speakRecord,
   openVideoModal: (m) => VideoRoom.openModal(m),
   vrPickMode: (m) => { VideoRoom.mode = m; $$('.mode-card').forEach(el2 => el2.classList.toggle('selected', el2.dataset.mode === m)); },
-  vrJoin: () => VideoRoom.join(), vrLeave: () => VideoRoom.leave(), vrToggleMic: () => VideoRoom.toggleMic(),
+  vrJoin: () => VideoRoom.join(), vrLeave: () => VideoRoom.leave(), vrCopyCode, vrToggleMic: () => VideoRoom.toggleMic(),
   vrToggleCam: () => VideoRoom.toggleCam(), vrShareScreen: () => VideoRoom.shareScreen(),
   vrRecord: () => VideoRoom.vrRecordToggle(), vrSnapshot: () => VideoRoom.snapshot(),
   chalRecToggle, submitChallenge, deleteSubmission, reviewSubmission, saveReview,
