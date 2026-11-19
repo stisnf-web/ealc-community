@@ -11,6 +11,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<!-- QR code generator (lokal, digambar ke canvas) untuk fitur QR Tautan Berbagi -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
 <!-- supabase-js dipin ke versi tetap agar protokol realtime konsisten
      (tag @2 melayang memuat versi terbaru yang bisa berubah perilaku) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -4104,12 +4106,12 @@ RENDERERS.settings = function (el) {
             <div class="flex" style="flex-wrap:wrap">
               <button class="btn btn-primary btn-sm"><i class="fa-solid fa-floppy-disk"></i> Save</button>
               <button type="button" class="btn btn-ghost btn-sm" onclick="App.testSupabase()"><i class="fa-solid fa-plug-circle-bolt"></i> Test Connection</button>
-              ${(sbConfigured || sbDefault) ? '<button type="button" class="btn btn-ghost btn-sm" onclick="App.shareSupabaseLink()" title="Buat tautan berbagi yang langsung Mode Online"><i class="fa-solid fa-share-nodes"></i> Tautan Berbagi</button>' : ''}
+              ${(sbConfigured || sbDefault) ? '<button type="button" class="btn btn-ghost btn-sm" onclick="App.shareSupabaseLink()" title="Buat tautan berbagi yang langsung Mode Online"><i class="fa-solid fa-share-nodes"></i> Tautan Berbagi</button><button type="button" class="btn btn-ghost btn-sm" onclick="App.showShareQr()" title="Tampilkan tautan berbagi sebagai QR code"><i class="fa-solid fa-qrcode"></i> QR</button>' : ''}
               ${sbConfigured ? '<button type="button" class="btn btn-danger btn-sm" onclick="App.clearSupabase()"><i class="fa-solid fa-link-slash"></i> Clear</button>' : ''}
             </div>
           </form>
           <div class="divider"></div>
-          <p class="small muted">Mode Online: login &amp; pendaftaran memakai Supabase Auth, seluruh tabel komunitas (postingan, komentar, likes, kosakata, kuis, tantangan, event, notifikasi, poin) tersinkron otomatis antar perangkat. Admin mengubah role/poin via RPC; kolom proteksi RLS tetap aktif. Tombol <strong>Tautan Berbagi</strong> membuat URL berisi koneksi (anon key memang publik &amp; dilindungi RLS) &mdash; siapa pun yang membukanya langsung Mode Online tanpa mengisi Settings.</p>
+          <p class="small muted">Mode Online: login &amp; pendaftaran memakai Supabase Auth, seluruh tabel komunitas (postingan, komentar, likes, kosakata, kuis, tantangan, event, notifikasi, poin) tersinkron otomatis antar perangkat. Admin mengubah role/poin via RPC; kolom proteksi RLS tetap aktif. Tombol <strong>Tautan Berbagi</strong> membuat URL berisi koneksi (anon key memang publik &amp; dilindungi RLS) &mdash; siapa pun yang membukanya langsung Mode Online tanpa mengisi Settings. Tombol <strong>QR</strong> menampilkan tautan yang sama sebagai kode QR: sekali dipindai kamera HP, langsung terbuka Mode Online.</p>
         </div>
 
         <div class="card setting-group">
@@ -4308,6 +4310,9 @@ function resetData() {
 /* ---------------- Admin Dashboard (12 tab) ---------------- */
 RENDERERS.admin = function (el) {
   if (!isStaff()) { el.innerHTML = '<div class="empty-state card"><i class="fa-solid fa-lock"></i><p>Khusus staff.</p></div>'; return; }
+  /* Hierarki hak akses tab: Users & Roles hanya Admin ke atas;
+     App Settings (jembatan ke halaman Settings) hanya Super Admin.
+     Moderator tetap mendapat tab konten + Submissions untuk moderasi. */
   const tabs = [
     ['overview', 'fa-gauge-high', 'Overview'], ['users', 'fa-users-gear', 'Users & Roles'],
     ['mat-en', 'fa-book-open', 'Materials EN'], ['mat-ar', 'fa-language', 'Materials AR'],
@@ -4315,7 +4320,7 @@ RENDERERS.admin = function (el) {
     ['challenges', 'fa-fire', 'Challenges'], ['submissions', 'fa-inbox', 'Submissions'],
     ['events', 'fa-calendar-days', 'Events'], ['posts', 'fa-comments', 'Posts'],
     ['achievements', 'fa-medal', 'Achievements'], ['appsettings', 'fa-sliders', 'App Settings']
-  ];
+  ].filter(([id]) => (id !== 'users' || isAdmin()) && (id !== 'appsettings' || isSuper()));
   el.innerHTML = `
     <div class="page-head">
       <h2><i class="fa-solid fa-shield-halved"></i> Admin Dashboard</h2>
@@ -4332,11 +4337,14 @@ RENDERERS.admin = function (el) {
 function renderAdminTab() {
   const box = $('#adminContent');
   if (!box) return;
-  const t = S.adminTab;
+  let t = S.adminTab;
+  /* Penjaga tab (mis. S.adminTab tersimpan dari sesi sebelumnya saat role
+     berubah): tab di luar wewenang role otomatis dialihkan ke Overview. */
+  if ((t === 'users' && !isAdmin()) || (t === 'appsettings' && !isSuper())) { t = 'overview'; S.adminTab = 'overview'; }
   if (t === 'overview') return adminOverview(box);
   if (t === 'users') return adminUsers(box);
   if (t === 'appsettings') { box.innerHTML = `<div class="card"><div class="card-title"><i class="fa-solid fa-sliders"></i> Application Settings</div>
-    <p class="muted small mb-2">Identitas, tema, Supabase, fitur, dan poin dikelola di halaman Settings (hanya admin/staff yang punya akses peran).</p>
+    <p class="muted small mb-2">Identitas, tema, Supabase, fitur, dan poin dikelola di halaman Settings (khusus Super Admin).</p>
     <button class="btn btn-primary btn-sm" onclick="App.nav('settings')"><i class="fa-solid fa-arrow-right"></i> Buka Settings</button></div>`; return; }
   if (t === 'mat-en' || t === 'mat-ar') {
     const lang = t === 'mat-en' ? 'english' : 'arabic';
@@ -4499,6 +4507,8 @@ function adminUsers(box) {
 }
 function adminSetRole(id, role) {
   const target = getUser(id);
+  /* Hierarki: perubahan role hanya Admin ke atas; moderator/member ditolak. */
+  if (!isAdmin()) { toast('error', 'Akses ditolak', 'Perubahan role khusus Admin ke atas.'); renderAdminTab(); return; }
   if (role === 'super_admin' && !isSuper()) { toast('error', 'Ditolak', 'Hanya Super Admin dapat menunjuk Super Admin.'); renderAdminTab(); return; }
   /* Super Admin tidak boleh diturunkan/dihapus rolenya oleh Admin biasa. */
   if (target.role === 'super_admin' && !isSuper()) { toast('error', 'Ditolak', 'Hanya Super Admin dapat mengubah akun Super Admin lain.'); renderAdminTab(); return; }
@@ -4532,6 +4542,7 @@ function adminAddPointsBtn(id) {
 }
 function adminAddPointsSave(e, id) {
   e.preventDefault();
+  if (!isAdmin()) { toast('error', 'Akses ditolak', 'Penambahan poin khusus Admin ke atas.'); return; }
   const amount = clamp(parseInt($('#apPoints').value) || 0, 1, 1000);
   const reason = $('#apReason').value.trim() || 'Bonus dari admin';
   const finish = (name) => { renderAdminTab(); toast('success', 'Poin ditambahkan', `${name} +${amount}`); };
@@ -4555,6 +4566,7 @@ function adminAddPointsSave(e, id) {
   S.user = me;
 }
 function adminToggleActive(id) {
+  if (!isAdmin()) { toast('error', 'Akses ditolak', 'Aktivasi akun khusus Admin ke atas.'); return; }
   if (SB.on() && SB.ready) {
     toast('warning', 'Mode Online', 'Aktif/nonaktif akun diatur dari Supabase Dashboard (tabel profiles, kolom is_active) karena dilindungi RLS.');
     return;
@@ -4568,6 +4580,7 @@ function adminToggleActive(id) {
 }
 function adminDeleteUser(id) {
   const u = getUser(id);
+  if (!isAdmin()) { toast('error', 'Akses ditolak', 'Penghapusan akun khusus Admin ke atas.'); return; }
   confirmDialog('Delete user', `Hapus permanen akun ${u.fullName}? Data postingannya juga terhapus.`, () => {
     removeById('users', id);
     put('posts', rows('posts').filter(p => p.userId !== id));
@@ -4715,16 +4728,19 @@ function closeDrawer() { $('#drawerHost').innerHTML = ''; }
       (URL + anon key, memang publik & dilindungi RLS) pada fragment #sb=...
       Siapa pun yang membukanya langsung Mode Online.
    2. Konstanta SB_DEFAULT_URL / SB_DEFAULT_ANON_KEY di p05b (tertanam). */
-function shareSupabaseLink() {
+function buildShareLink() {
   const c = SB.cfg();
-  if (!c.url || !c.key) { toast('warning', 'Belum dikonfigurasi', 'Isi Project URL dan anon key Supabase terlebih dahulu.'); return; }
+  if (!c.url || !c.key) return null;
   let payload = '';
   try {
     payload = btoa(JSON.stringify({ u: c.url, k: c.key }))
       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   } catch (e) { /* bukan Latin1 — tidak mungkin untuk URL/key */ }
-  if (!payload) { toast('error', 'Gagal', 'Koneksi tidak dapat dikodekan ke tautan.'); return; }
-  const link = location.origin + location.pathname + location.search + '#sb=' + payload;
+  return payload ? location.origin + location.pathname + location.search + '#sb=' + payload : null;
+}
+function shareSupabaseLink() {
+  const link = buildShareLink();
+  if (!link) { toast('warning', 'Belum dikonfigurasi', 'Isi Project URL dan anon key Supabase terlebih dahulu.'); return; }
   const copyFallback = () => {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link)
@@ -4737,6 +4753,61 @@ function shareSupabaseLink() {
       .then(() => toast('info', 'Tautan dibagikan', 'Penerima akan langsung masuk Mode Online.'))
       .catch(() => copyFallback());
   } else copyFallback();
+}
+/* Tampilkan tautan berbagi sebagai QR code. Dipindai kamera HP,
+   penerima langsung membuka aplikasi dalam Mode Online (tanpa
+   mengisi Settings). QR digambar LOKAL ke <canvas> memakai pustaka
+   qrcode-generator (CDN) — payload SAMA dengan tombol Tautan
+   Berbagi; tidak memakai API QR pihak ketiga agar URL + anon key
+   tidak dikirim ke server lain. */
+function showShareQr() {
+  const link = buildShareLink();
+  if (!link) { toast('warning', 'Belum dikonfigurasi', 'Isi Project URL dan anon key Supabase terlebih dahulu.'); return; }
+  openModal(modalShell(
+    '<i class="fa-solid fa-qrcode" style="color:var(--accent)"></i> QR Tautan Berbagi',
+    `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center">
+       <div id="qrBox" style="display:flex;align-items:center;justify-content:center;min-height:120px;width:100%"></div>
+       <p class="small muted" style="margin:0">Pindai dengan kamera HP &mdash; tautan langsung membuka aplikasi ini dengan <strong>Mode Online aktif</strong>, tanpa mengisi Settings.</p>
+       <input class="form-control" id="qrLink" readonly value="${escAttr(link)}" onclick="this.select()">
+       <div class="flex" style="flex-wrap:wrap;justify-content:center">
+         <button type="button" class="btn btn-ghost btn-sm" onclick="App.shareSupabaseLink()"><i class="fa-solid fa-copy"></i> Salin Tautan</button>
+         <button type="button" class="btn btn-primary btn-sm" id="qrDl"><i class="fa-solid fa-download"></i> Unduh PNG</button>
+       </div>
+       <p class="small muted" style="margin:0"><i class="fa-solid fa-shield-halved"></i> Isi QR sama dengan tautan berbagi (URL + anon key publik &mdash; tetap dilindungi RLS).</p>
+     </div>`,
+    '', 'narrow'));
+  const box = document.getElementById('qrBox');
+  let canvas = null;
+  if (typeof qrcode !== 'undefined') {
+    try {
+      const q = qrcode(0, 'M'); /* typeNumber 0 = pilih versi QR otomatis sesuai panjang teks */
+      q.addData(link); /* tautan selalu ASCII (URL + base64url) */
+      q.make();
+      const n = q.getModuleCount(), QUIET = 4, TARGET = 296;
+      const scale = Math.max(2, Math.floor(TARGET / (n + QUIET * 2)));
+      const px = (n + QUIET * 2) * scale;
+      canvas = document.createElement('canvas');
+      canvas.width = px; canvas.height = px;
+      canvas.style.cssText = 'width:' + px + 'px;max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line)';
+      const cx = canvas.getContext('2d');
+      cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, px, px);
+      cx.fillStyle = '#101828';
+      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) cx.fillRect((c + QUIET) * scale, (r + QUIET) * scale, scale, scale);
+    } catch (e) { canvas = null; }
+  }
+  if (canvas) {
+    box.appendChild(canvas);
+    document.getElementById('qrDl').addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.download = 'qr-tautan-berbagi-ealc.png';
+      a.href = canvas.toDataURL('image/png');
+      document.body.appendChild(a); a.click(); a.remove();
+      toast('success', 'QR diunduh', 'Cetak atau tempel gambarnya di grup — sekali pindai, langsung terhubung.');
+    });
+  } else {
+    box.innerHTML = '<div class="warn-note" style="max-width:320px"><i class="fa-solid fa-triangle-exclamation"></i><span>Pustaka QR belum termuat (CDN tidak terjangkau). Salin tautan di bawah secara manual.</span></div>';
+    const dl = document.getElementById('qrDl'); if (dl) dl.disabled = true;
+  }
 }
 /* Terapkan koneksi dari #sb=... (tautan berbagi). Dipanggil di init() sebelum
    badge mode dirender; hash dibersihkan setelah config disimpan. */
@@ -4824,7 +4895,7 @@ window.App = {
   updateProfile, uploadAvatar, changePassword,
   aiAsk, sendAI,
   saveIdentity, uploadLogo, resetLogo, setThemeMode, setAccent, customColor, toggleFeature, savePoints,
-  saveSupabase, testSupabase, clearSupabase, shareSupabaseLink, exportData, importData, resetData,
+  saveSupabase, testSupabase, clearSupabase, shareSupabaseLink, showShareQr, exportData, importData, resetData,
   adminTab: (t) => { S.adminTab = t; renderAdminTab(); },
   adminSetRole, adminAddPointsBtn, adminAddPointsSave, adminToggleActive, adminDeleteUser, deletePostAdmin,
   openAchForm: achForm, submitAch, deleteAch,
