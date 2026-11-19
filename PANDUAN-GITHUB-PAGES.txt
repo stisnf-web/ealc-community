@@ -1,0 +1,222 @@
+================================================================
+ PANDUAN GITHUB PAGES — BUKA APLIKASI DARI HP & TABLET
+ ENGLISH ARABIC LANGUAGE COMMUNITY
+================================================================
+
+Tujuan panduan ini: aplikasi online lewat GRATIS di GitHub Pages,
+lalu bisa dibuka dari HP, tablet, dan komputer lain di mana saja
+dengan alamat seperti:
+
+    https://nama-anda.github.io/ealc-community/
+
+Alamat itu HTTPS otomatis — syarat agar IZIN KAMERA & MIKROFON
+Video Room berfungsi di HP/tablet (browser menolak kamera pada
+alamat http:// biasa).
+
+Waktu pengerjaan: ± 10 menit. Tidak perlu install apa pun.
+
+================================================================
+ LANGKAH 1 — BUAT AKUN & REPOSITORI GITHUB
+================================================================
+1. Buka https://github.com  ->  Sign up  ->  isi email + password.
+   (Lewati bila sudah punya akun.)
+2. Masuk (Sign in), klik tombol  +  di kanan atas  ->  New repository.
+3. Isi form:
+   - Repository name : ealc-community   (boleh nama lain)
+   - Description     : English Arabic Language Community
+   - Visibilitas     : Public  (wajib untuk Pages gratis)
+4. Klik  Create repository.
+
+CATATAN KEAMANAN: mengunggah aplikasi ini ke GitHub PUBLIK adalah
+AMAN — yang boleh ada di dalam index.html hanyalah ANON KEY
+(kredensial publik, dilindungi Row Level Security Supabase);
+JANGAN PERNAH menaruh service_role key; data demo tidak ikut
+terunggah.
+
+================================================================
+ LANGKAH 2 — UNGGAH FILE APLIKASI
+================================================================
+Di halaman repositori yang baru dibuat:
+1. Klik link  uploading an existing file  (atau Add file -> Upload
+   files).
+2. Tarik-lepas (drag & drop) file berikut dari folder aplikasi:
+       index.html            (wajib — satu-satunya file aplikasi)
+       supabase_schema.sql   (opsional — biar ikut tersimpan)
+       README.md             (opsional)
+   Yang benar-benar dibutuhkan Pages hanya index.html.
+3. Klik tombol hijau  Commit changes.
+4. Tunggu ± beberapa detik sampai file muncul di daftar repositori.
+
+================================================================
+ LANGKAH 3 — AKTIFKAN GITHUB PAGES
+================================================================
+1. Di repositori, klik  Settings  (tab atas).
+2. Menu kiri:  Pages.
+3. Bagian "Build and deployment":
+   - Source            : Deploy from a branch
+   - Branch            : pilih  main  dan folder  / (root)
+   - Klik  Save.
+4. Halaman Pages menampilkan "Your site is live at ..." setelah
+   1-2 menit. Muat ulang halaman Settings bila belum muncul.
+5. Alamat aplikasi Anda:
+       https://<username>.github.io/<nama-repo>/
+   Contoh: https://budi.github.io/ealc-community/
+
+================================================================
+ LANGKAH 4 — BUKA DARI HP / TABLET
+================================================================
+1. Buka browser HP (Chrome/Safari), ketik alamat di Langkah 3.5.
+2. Halaman login tampil -> ketuk salah satu tombol akun demo:
+       superadmin@demo.com / admin@demo.com /
+       moderator@demo.com / member@demo.com
+   (sekali ketuk langsung masuk). Password: super123 / admin123 /
+   mod123 / member123.
+   HAK AKSES per role:
+   - superadmin@demo.com -> akses penuh TERMASUK Settings
+     (identitas/logo, tema, koneksi Supabase, data, tautan berbagi)
+   - admin@demo.com      -> Admin Dashboard + kelola konten & pengguna,
+                             TANPA Settings
+   - moderator@demo.com  -> moderasi konten & review, TANPA Settings
+   - member@demo.com     -> akses anggota biasa, TANPA Settings
+3. Selesai — seluruh modul bisa dipakai dari HP:
+   - Sidebar tidak ada di HP; ganti dengan BOTTOM-NAV di bawah:
+     Home, Learn, Community, Speak, More (menu lainnya ada di
+     "More", termasuk Admin Dashboard; Settings hanya terlihat
+     oleh Super Admin).
+   - Tampilan sudah diverifikasi di viewport 360px, 390px
+     (iPhone), dan 768px (iPad) tanpa overflow horizontal.
+
+TIPS: simpan alamat ke layar utama HP — Chrome/Safari -> menu ->
+"Add to Home screen", agar seperti aplikasi biasa.
+
+================================================================
+ LANGKAH 5 — UPDATE APLIKASI DI KEMUDIAN HARI
+================================================================
+1. Buka repositori -> Add file -> Upload files.
+2. Tarik index.html versi baru (menimpa yang lama).
+3. Commit changes -> tunggu ± 1 menit -> situs otomatis terbarui.
+   (Bila tampilan lama masih muncul di HP: tarik-refresh halaman;
+    versi data demo akan diperbarui otomatis oleh aplikasi.)
+
+================================================================
+ DATA & LOGIN ANTAR PERANGKAT
+================================================================
+- Mode LOKAL (tanpa Supabase): data tersimpan di localStorage
+  TIAP perangkat. HP dan komputer punya data masing-masing —
+  cocok untuk demo/coba-coba.
+- Mode ONLINE (dengan Supabase): satu database untuk semua
+  perangkat. Postingan, kosakata, poin, dan login terhubung.
+  Cara mengaktifkan lihat PETUNJUK-MENJALANKAN.txt bagian D
+  (SQL Editor -> Settings -> Koneksi Supabase).
+
+================================================================
+ MEMBAGIKAN TAUTAN AGAR LANGSUNG MODE ONLINE
+================================================================
+Koneksi Supabase tersimpan di localStorage TIAP browser, jadi
+orang yang membuka tautan biasa akan masuk MODE DEMO dulu.
+Dua cara membuat pengunjung langsung Mode Online:
+
+CARA 1 — TOMBOL "TAUTAN BERBAGI" (paling mudah)
+1. Di perangkat Anda (yang Supabase-nya sudah terkoneksi),
+   buka Settings -> kartu Koneksi Supabase.
+2. Klik tombol  Tautan Berbagi.
+3. Aplikasi membuat tautan khusus berisi koneksi (URL + anon
+   key di fragment #sb=...) lalu menyalinnya / membuka menu
+   berbagi (WhatsApp, dll).
+4. Bagikan TAUTAN ITU (bukan tautan biasa). Siapa pun yang
+   membukanya: badge "Mode Online — Supabase" langsung tampil,
+   tanpa perlu mengisi Settings.
+   Catatan: anon key memang kredensial PUBLIK — aman disebar,
+   datanya dilindungi RLS.
+
+CARA 2 — TERTANAMKAN KONFIGURASI DI index.html (alamat biasa
+pun langsung online)
+1. Buka index.html dengan text editor, cari baris:
+       const SB_DEFAULT_URL
+2. Isi dua baris tersebut:
+       const SB_DEFAULT_URL      = 'https://xxxx.supabase.co';
+       const SB_DEFAULT_ANON_KEY = 'eyJhbGciOi...';
+   (nilainya sama dengan yang ada di Settings -> Koneksi
+   Supabase perangkat Anda)
+3. Unggah ulang index.html ke GitHub (Langkah 5).
+4. Selesai — ALAMAT BIASA pun langsung Mode Online untuk semua
+   orang; tidak perlu tautan khusus.
+
+Masih mode demo setelah dibuka? Yang membuka cukup login (klik
+akun demo) lalu Settings -> Koneksi Supabase sekali saja, atau
+minta tautan dari CARA 1.
+
+PENTING — HAK AKSES SETELAH UPDATE INI:
+Menu/halaman Settings hanya untuk role SUPER ADMIN.
+- Mode demo: pakai tombol "superadmin@demo.com" di halaman login.
+- Mode Online (Supabase) yang SUDAH berjalan: jalankan sekali
+  file migrasi_superadmin.sql di SQL Editor Supabase (isi langkah
+  lengkap ada di file tersebut). File itu juga menaikkan akun Anda
+  sendiri menjadi Super Admin dan membuat akun
+  superadmin@demo.com / super123.
+  Instalasi BARU cukup menjalankan supabase_schema.sql versi
+  terbaru (akun superadmin sudah termasuk di dalamnya).
+
+================================================================
+ VIDEO ROOM DARI HP
+================================================================
+Menu Speaking & Video Room -> Open Video Room:
+- Solo Practice : kamera + rekaman, jalan di HP (HTTPS sudah
+  terpenuhi di GitHub Pages).
+- Group Room (Jitsi): jalan di HP — izinkan kamera/mikrofon saat
+  popup muncul. Grup besar, screen share, chat.
+- P2P Call (WebRTC): antar-perangkat butuh koneksi Supabase di
+  Settings (signaling Realtime). WAJIB: kedua perangkat memakai
+  KODE ROOM YANG SAMA PERSIS — kode default berbeda tiap akun
+  (privasi). Di panggung room ada chip "Kode room" + tombol
+  Salin: salin dari perangkat pertama, tempel di perangkat
+  kedua (atau sepakati kode sendiri, mis. KELAS-A1). Saat teman
+  terdeteksi, status berubah "Terhubung — 2 peserta" dan tile
+  videonya muncul otomatis di samping tile Anda.
+Kamera tidak jalan? Pastikan: (1) alamat https:// bukan http://,
+(2) izin kamera di browser HP diberikan (ikon gembok di address
+bar -> Permissions), (3) tidak sedang dipakai aplikasi lain.
+
+================================================================
+ TROUBLESHOOTING
+================================================================
+Masalah                         Solusi
+----------------------------------------------------------------------
+404 saat buka alamat Pages      Tunggu 2-3 menit; cek branch = main,
+                                folder = / (root); cek nama file
+                                tepat "index.html" (huruf kecil).
+"Your site is live" belum       Muat ulang halaman Settings -> Pages;
+muncul                          build pertama kadang sampai 5 menit.
+Login gagal di HP               Ketuk tombol akun demo sekali lagi
+                                (perbaikan otomatis), atau ketuk
+                                "Reset Data Demo" di kartu login.
+Settings hilang dari menu       Memang disengaja: Settings khusus
+                                Super Admin. Login dengan
+                                superadmin@demo.com (Mode demo)
+                                atau jalankan migrasi_superadmin.sql
+                                dan angkat akun Anda sendiri
+                                (Mode Online).
+"Email not confirmed"           Supabase meminta konfirmasi email.
+                                Untuk demo: Dashboard Supabase ->
+                                Authentication -> Sign In / Providers
+                                -> Email -> Confirm email = OFF
+                                (akun lama otomatis bisa login),
+                                atau Authentication -> Users ->
+                                menu titik tiga -> Confirm user's
+                                email.
+Kamera ditolak                  Alamat harus https:// (GitHub Pages
+                                sudah); beri izin di popup browser.
+Halaman tampak acak/bergaya     Internet HP diperlukan untuk CDN
+kurang saat pertama             Font Awesome & Google Fonts; coba
+                                muat ulang sekali lagi.
+Grafik kosong                   Chart.js dari CDN belum termuat;
+                                periksa koneksi, muat ulang.
+
+ALTERNATIF TANPA GITHUB: Netlify Drop (https://app.netlify.com/drop)
+— tarik-lepas index.html, langsung dapat alamat HTTPS. Langkah
+update sama (drop ulang filenya).
+
+================================================================
+ Selamat! Aplikasi komunitas Anda kini bisa diakses dari mana
+ saja — Learn Together, Speak Confidently, Grow Together!
+================================================================

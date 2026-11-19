@@ -1275,6 +1275,11 @@ insert into auth.users
   (id, aud, role, email, encrypted_password, email_confirmed_at,
    raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
+  ('00000000-0000-4000-8000-000000000004'::uuid, 'authenticated', 'authenticated',
+   'superadmin@demo.com',
+   '$2a$10$2y2RUK1LEZKWa8nQhC.G0.695z3Exf4.M.mcbQwb9gC2wv3Ukt7ty',  -- super123
+   now(), '{"provider":"email","providers":["email"]}',
+   '{"full_name":"Farhan Hidayat"}', now(), now()),
   ('00000000-0000-4000-8000-000000000001'::uuid, 'authenticated', 'authenticated',
    'admin@demo.com',
    '$2a$10$wd0dmOIGSXToFRoQQABkDeCt3w08HqBPgpsnBMQhutBpBbXMQatjC',  -- admin123
@@ -1299,7 +1304,7 @@ select u.id, 'email', u.id::text,
        jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
        now(), now(), now()
 from auth.users u
-where u.email in ('admin@demo.com', 'moderator@demo.com', 'member@demo.com')
+where u.email in ('superadmin@demo.com', 'admin@demo.com', 'moderator@demo.com', 'member@demo.com')
 on conflict do nothing;
 
 -- Profil dibuat otomatis oleh trigger 5.6. Blok ini jaring pengaman bila
@@ -1579,11 +1584,22 @@ values (1,
         (select id from public.profiles where email = 'admin@demo.com'))
 on conflict (id) do nothing;
 
--- 9.17 PROFIL AKHIR (poin/level eksplisit menimpa hasil trigger seed agar konsisten)
+-- 9.17 PROFIL AKHIR (poin/level/role eksplisit menimpa hasil trigger seed agar
+--      konsisten). Hierarki hak akses aplikasi:
+--      super_admin  -> akses penuh TERMASUK halaman Settings
+--      administrator-> seluruh konten & pengguna, TANPA halaman Settings
+--      moderator    -> moderasi konten & review, TANPA halaman Settings
+--      member       -> akses anggota biasa, TANPA halaman Settings
 update public.profiles set
-  role = 'super_admin', points = 1240, level = 5, streak_days = 12,
+  role = 'super_admin', points = 1500, level = 6, streak_days = 15,
+  english_level = 'advanced', arabic_level = 'mutaqaddim',
+  bio = 'Pemilik komunitas. Satu-satunya role yang dapat membuka halaman Settings.'
+where email = 'superadmin@demo.com';
+
+update public.profiles set
+  role = 'administrator', points = 1240, level = 5, streak_days = 12,
   english_level = 'advanced', arabic_level = 'mutawassith',
-  bio = 'Super Administrator komunitas. Fasilitator English Conversation Club.'
+  bio = 'Administrator komunitas. Fasilitator English Conversation Club.'
 where email = 'admin@demo.com';
 
 update public.profiles set

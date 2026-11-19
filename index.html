@@ -668,11 +668,12 @@ pre.codeblock{
     <div class="demo-creds mt-2">
       <strong><i class="fa-solid fa-flask" style="color:var(--gold)"></i> Demo accounts</strong> (klik untuk langsung masuk):
       <div>
+        <button type="button" onclick="App.demoLogin('superadmin@demo.com')"><i class="fa-solid fa-crown" style="color:var(--gold)"></i> superadmin@demo.com</button>
         <button type="button" onclick="App.demoLogin('admin@demo.com')"><i class="fa-solid fa-user-shield"></i> admin@demo.com</button>
         <button type="button" onclick="App.demoLogin('moderator@demo.com')"><i class="fa-solid fa-user-gear"></i> moderator@demo.com</button>
         <button type="button" onclick="App.demoLogin('member@demo.com')"><i class="fa-solid fa-user"></i> member@demo.com</button>
       </div>
-      <p class="muted" id="loginNote" style="margin-top:.5rem">Passwords: admin123 / mod123 / member123.
+      <p class="muted" id="loginNote" style="margin-top:.5rem">Passwords: super123 / admin123 / mod123 / member123.
       This login is <strong>for demonstration only</strong> — data is stored in your browser (localStorage).
       Production authentication should use Supabase Auth (see Settings &rarr; Supabase).</p>
       <button type="button" class="btn btn-ghost btn-block" style="margin-top:.6rem" onclick="App.resetDemoData()"><i class="fa-solid fa-rotate-left"></i> Reset Data Demo</button>
@@ -836,14 +837,20 @@ const EN_LEVELS = ['beginner', 'elementary', 'intermediate', 'upper_intermediate
 const AR_LEVELS = ['mubtadi', 'mutawassith', 'mutaqaddim'];
 const enLevelLabel = (v) => ({ beginner: 'Beginner', elementary: 'Elementary', intermediate: 'Intermediate', upper_intermediate: 'Upper Intermediate', advanced: 'Advanced' }[v] || v);
 const arLevelLabel = (v) => ({ mubtadi: "Mubtadi'", mutawassith: 'Mutawassith', mutaqaddim: 'Mutaqaddim' }[v] || v);
+/* Label role yang rapi untuk UI (dropdown Admin Dashboard, badge, dll.) */
+const ROLE_LABELS = { super_admin: 'Super Admin', administrator: 'Admin', moderator: 'Moderator', member: 'Member' };
 
 /* ---------------- Seed data (dummy, mirrors supabase_schema.sql) ---------------- */
 function buildSeed() {
   const t = Date.now(), day = 86400000, iso = (ms) => new Date(ms).toISOString();
   return {
     users: [
-      { id: 'u1', email: 'admin@demo.com', password: 'admin123', fullName: 'Ahmad Fauzi', role: 'super_admin',
-        bio: 'Super Administrator komunitas. Fasilitator English Conversation Club.', nativeLanguage: 'Indonesian',
+      { id: 'u0', email: 'superadmin@demo.com', password: 'super123', fullName: 'Farhan Hidayat', role: 'super_admin',
+        bio: 'Pemilik komunitas. Satu-satunya role yang dapat membuka halaman Settings.', nativeLanguage: 'Indonesian',
+        englishLevel: 'advanced', arabicLevel: 'mutaqaddim', points: 1500, level: 6, streak: 15,
+        lastActive: iso(t), isActive: true, createdAt: iso(t - 180 * day), avatarUrl: null },
+      { id: 'u1', email: 'admin@demo.com', password: 'admin123', fullName: 'Ahmad Fauzi', role: 'administrator',
+        bio: 'Administrator komunitas. Fasilitator English Conversation Club.', nativeLanguage: 'Indonesian',
         englishLevel: 'advanced', arabicLevel: 'mutawassith', points: 1240, level: 5, streak: 12,
         lastActive: iso(t - day), isActive: true, createdAt: iso(t - 120 * day), avatarUrl: null },
       { id: 'u2', email: 'moderator@demo.com', password: 'mod123', fullName: 'Siti Rahma', role: 'moderator',
@@ -1002,11 +1009,14 @@ function buildSeed() {
 }
 
 /* Naikkan angka ini setiap kali struktur seed berubah, agar browser lama
-   yang masih menyimpan data versi sebelumnya ikut diperbarui. */
-const SEED_VERSION = 2;
+   yang masih menyimpan data versi sebelumnya ikut diperbarui.
+   v3: hierarki role baru — Settings khusus Super Admin (akun
+   superadmin@demo.com ditambahkan, admin@demo.com diturunkan). */
+const SEED_VERSION = 3;
 
-/* Pastikan 3 akun demo selalu ada (menambahkan yang hilang tanpa
-   menyentuh data lain buatan pengguna). */
+/* Pastikan akun demo selalu ada (menambahkan yang hilang tanpa
+   menyentuh data lain buatan pengguna), lalu selaraskan role dengan
+   hierarki hak akses terbaru. */
 function ensureDemoAccounts() {
   const users = rows('users');
   if (!Array.isArray(users) || users.length === 0) { DB.set('users', buildSeed().users); return; }
@@ -1015,6 +1025,15 @@ function ensureDemoAccounts() {
     const i = users.findIndex(u => String((u && u.email) || '').toLowerCase() === d.email);
     if (i === -1) { users.push(JSON.parse(JSON.stringify(d))); changed = true; }
   });
+  /* Migrasi v3: admin@demo.com yang masih 'super_admin' (data versi lama)
+     diturunkan menjadi administrator; posisi Super Admin dipegang akun
+     superadmin@demo.com — Settings kini khusus Super Admin. */
+  const adm = users.find(u => String((u && u.email) || '').toLowerCase() === 'admin@demo.com');
+  if (adm && adm.role === 'super_admin') {
+    adm.role = 'administrator';
+    adm.bio = 'Administrator komunitas. Fasilitator English Conversation Club.';
+    changed = true;
+  }
   if (changed) put('users', users);
 }
 
@@ -1254,7 +1273,10 @@ function renderChrome() {
   const me = S.user;
   const unread = Notifications.unreadCount();
   const navList = $('#navList');
-  let html = MENU.map(m => `<li><a href="#" data-route="${m.route}" onclick="App.nav('${m.route}');return false;" class="${S.route === m.route ? 'active' : ''}">
+  /* Hak akses menu: Settings (identitas, tema, koneksi Supabase, reset data)
+     hanya untuk Super Admin. Admin/Moderator/Member tidak melihat menu ini. */
+  const items = MENU.filter(m => m.route !== 'settings' || isSuper());
+  let html = items.map(m => `<li><a href="#" data-route="${m.route}" onclick="App.nav('${m.route}');return false;" class="${S.route === m.route ? 'active' : ''}">
       <i class="fa-solid ${m.icon}"></i> ${m.label}
       ${m.route === 'notifications' && unread ? `<span class="nav-badge">${unread}</span>` : ''}
     </a></li>`).join('');
@@ -1265,7 +1287,7 @@ function renderChrome() {
     </a></li>`;
   }
   navList.innerHTML = html;
-  const roleLabel = { super_admin: 'Super Administrator', administrator: 'Administrator', moderator: 'Moderator', member: 'Member' }[me.role] || me.role;
+  const roleLabel = ROLE_LABELS[me.role] || me.role;
   $('#sideUser').innerHTML = `
     ${avatarHTML(me, 36)}
     <div><div class="su-name">${esc(me.fullName)}</div><div class="su-role">${esc(roleLabel)}</div></div>
@@ -1291,6 +1313,7 @@ const RENDERERS = {};
 function nav(route) {
   if (!S.user) return;
   if (route === 'admin' && !isStaff()) { toast('warning', 'Akses ditolak', 'Halaman ini khusus untuk staff.'); return; }
+  if (route === 'settings' && !isSuper()) { toast('warning', 'Akses ditolak', 'Pengaturan (identitas, tema, Supabase, data) khusus Super Admin.'); return; }
   if (['english', 'arabic', 'speaking', 'leaderboard'].includes(route)) {
     const st = S.settings;
     if (st && route === 'speaking' && st.enableSpeaking === false) { toast('warning', 'Fitur dimatikan', 'Speaking Room dinonaktifkan oleh admin.'); return; }
@@ -1375,7 +1398,7 @@ function afterLogin(user) {
   nav('dashboard');
   toast('success', 'Welcome back!', `Signed in as ${user.fullName}`);
 }
-const DEMO_CREDS = { 'admin@demo.com': 'admin123', 'moderator@demo.com': 'mod123', 'member@demo.com': 'member123' };
+const DEMO_CREDS = { 'superadmin@demo.com': 'super123', 'admin@demo.com': 'admin123', 'moderator@demo.com': 'mod123', 'member@demo.com': 'member123' };
 function authenticate(email, pass) {
   const e = String(email || '').trim().toLowerCase();
   const u = rows('users').find(x => String(x.email || '').toLowerCase() === e);
@@ -3981,6 +4004,17 @@ function clearAllNotifs() {
 
 /* ---------------- Settings ---------------- */
 RENDERERS.settings = function (el) {
+  /* Hak akses: halaman Settings (identitas, tema, Supabase, reset data)
+     hanya untuk Super Admin — sesuai hierarki role komunitas. */
+  if (!isSuper()) {
+    el.innerHTML = `<div class="page-head"><h2><i class="fa-solid fa-gear"></i> Settings</h2>
+      <p>Identitas komunitas, tampilan, koneksi Supabase, dan pengelolaan data.</p></div>
+      <div class="empty-state card"><i class="fa-solid fa-lock" style="font-size:2rem;color:var(--gold)"></i>
+      <p><strong>Pengaturan khusus Super Admin.</strong></p>
+      <p class="muted small">Hanya akun dengan role Super Admin yang dapat mengubah identitas komunitas, tema, koneksi Supabase, dan data demo.
+      Hubungi pemilik komunitas bila memerlukan akses.</p></div>`;
+    return;
+  }
   const st = S.settings;
   const sbConfigured = !!(st.supabaseUrl && st.supabaseAnonKey);
   const sbDefault = !!(typeof SB_DEFAULT_URL !== 'undefined' && SB_DEFAULT_URL && SB_DEFAULT_ANON_KEY);
@@ -4450,7 +4484,7 @@ function adminUsers(box) {
           <td><div class="flex">${avatarHTML(u, 32)}<div><strong style="font-size:.84rem">${esc(u.fullName)}</strong>
             <div class="muted" style="font-size:.7rem">${esc(u.email)}</div></div></div></td>
           <td><select class="form-control" style="width:auto;font-size:.75rem;padding:.3rem .5rem" onchange="App.adminSetRole('${u.id}',this.value)" ${u.id === S.user.id ? 'disabled' : ''}>
-            ${['super_admin', 'administrator', 'moderator', 'member'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+            ${['super_admin', 'administrator', 'moderator', 'member'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE_LABELS[r] || r}</option>`).join('')}
           </select></td>
           <td>${u.points}</td>
           <td>Lv ${u.level}</td>
@@ -4465,8 +4499,10 @@ function adminUsers(box) {
 }
 function adminSetRole(id, role) {
   const target = getUser(id);
-  if (role === 'super_admin' && !isSuper()) { toast('error', 'Ditolak', 'Hanya Super Administrator dapat menunjuk Super Admin.'); renderAdminTab(); return; }
-  confirmDialog('Ubah role', `Jadikan ${target.fullName} sebagai ${role}?`, () => {
+  if (role === 'super_admin' && !isSuper()) { toast('error', 'Ditolak', 'Hanya Super Admin dapat menunjuk Super Admin.'); renderAdminTab(); return; }
+  /* Super Admin tidak boleh diturunkan/dihapus rolenya oleh Admin biasa. */
+  if (target.role === 'super_admin' && !isSuper()) { toast('error', 'Ditolak', 'Hanya Super Admin dapat mengubah akun Super Admin lain.'); renderAdminTab(); return; }
+  confirmDialog('Ubah role', `Jadikan ${target.fullName} sebagai ${ROLE_LABELS[role] || role}?`, () => {
     if (SB.on() && SB.ready) {
       SB.adminSetRole(id, role).then(() => SB.pullAll(true)).then(() => {
         renderAdminTab(); renderChrome();
@@ -4659,7 +4695,8 @@ function deleteChallenge(id) {
 /* ---------------- More drawer (mobile) ---------------- */
 function openMoreDrawer() {
   const host = $('#drawerHost');
-  const all = isStaff() ? MENU.concat([{ route: 'admin', label: 'Admin Dashboard', icon: 'fa-shield-halved' }]) : MENU;
+  const all = (isStaff() ? MENU.concat([{ route: 'admin', label: 'Admin Dashboard', icon: 'fa-shield-halved' }]) : MENU)
+    .filter(m => m.route !== 'settings' || isSuper());
   host.innerHTML = `<div class="drawer-overlay" onclick="App.closeDrawer()"></div>
     <div class="drawer">
       <div class="flex-between mb-2"><strong>Menu</strong><button class="btn btn-ghost btn-xs" onclick="App.closeDrawer()"><i class="fa-solid fa-xmark"></i></button></div>
@@ -4734,8 +4771,8 @@ function renderModeBadge() {
   }
   const note = $('#loginNote');
   if (note) note.innerHTML = SB.on()
-    ? 'Passwords: admin123 / mod123 / member123. Login dijalankan lewat <strong>Supabase Auth</strong> — data tersinkron otomatis antar perangkat. Akun demo di bawah bisa langsung dipakai.'
-    : 'Passwords: admin123 / mod123 / member123. This login is <strong>for demonstration only</strong> — data is stored in your browser (localStorage). Production authentication should use Supabase Auth (see Settings &rarr; Supabase).';
+    ? 'Passwords: super123 / admin123 / mod123 / member123. Login dijalankan lewat <strong>Supabase Auth</strong> — data tersinkron otomatis antar perangkat. Akun demo di bawah bisa langsung dipakai.'
+    : 'Passwords: super123 / admin123 / mod123 / member123. This login is <strong>for demonstration only</strong> — data is stored in your browser (localStorage). Production authentication should use Supabase Auth (see Settings &rarr; Supabase).';
 }
 function init() {
   seedIfNeeded();
