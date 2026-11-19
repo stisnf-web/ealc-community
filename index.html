@@ -2735,7 +2735,7 @@ const VideoRoom = {
         <div class="form-group mt-2" style="margin-bottom:0">
           <label>Room code</label>
           <div class="flex" style="flex-wrap:wrap">
-            <input class="form-control" id="vrCode" style="flex:1;min-width:0" value="${escAttr(this.code || DB.get('vrLastCode', '') || this.suggestCode())}" maxlength="40">
+            <input class="form-control" id="vrCode" style="flex:1;min-width:0" value="${escAttr(this.code || DB.get('vrLastCode', '') || this.suggestCode())}" maxlength="80">
             <button type="button" class="btn btn-ghost btn-sm" onclick="App.vrCopyCode()" title="Salin kode"><i class="fa-solid fa-copy"></i></button>
           </div>
           <div class="form-hint"><strong>Kode harus SAMA PERSIS</strong> di semua perangkat yang ingin saling bertatap muka. Kode default berbeda tiap akun (privasi) &mdash; salin kode dari perangkat pertama ke perangkat kedua, atau sepakati kode sendiri (mis. <code>KELAS-A1</code>).</div>
@@ -2748,15 +2748,19 @@ const VideoRoom = {
   },
   cleanupIfModal() { if (this.open) this.forceLeaveAll(); },
 
-  /* Kode room default yang cukup panjang/unik agar Jitsi tidak menandai
-     nama room mudah ditebak: EALC-<idUser>-<hash email/id>. */
+  /* Kode room default HARUS pendek agar mudah diketik/disalin utuh di
+     perangkat kedua (dulu EALC-<UUID>-<tag> = 44 karakter dan terpotong
+     maxlength input -> 2 akun tak pernah ketemu di room yang sama).
+     Tetap unik per akun (hash email/id, privasi) + tanpa karakter ambigu
+     (O/0/I/1). Format: EALC-XXXXXX (11 karakter). */
   suggestCode() {
     let s = String((S.user && (S.user.email || S.user.id)) || 'demo');
     let x = 5381;
     for (let i = 0; i < s.length; i++) x = ((x << 5) + x + s.charCodeAt(i)) >>> 0;
-    const tag = x.toString(36).toUpperCase().replace(/[^A-Z0-9]/g, '').padEnd(6, '7').slice(0, 6);
-    const idPart = String((S.user && S.user.id) || 'X').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    return 'EALC-' + idPart + '-' + tag;
+    const CH = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let tag = '';
+    for (let i = 0; i < 6; i++) { tag += CH[x % CH.length]; x = ((x * 31 + 7) >>> 0) || 1; }
+    return 'EALC-' + tag;
   },
 
   async join() {
