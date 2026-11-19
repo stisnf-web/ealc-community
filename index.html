@@ -1640,6 +1640,26 @@ const SB = {
   },
   rpc(fn, params) { return SB.api('/rest/v1/rpc/' + fn, { method: 'POST', body: params }); },
 
+  /* Panggil Supabase Edge Function (mis. 'ai-chat' untuk AI online).
+     Token login dipakai bila ada; jika belum login, anon key dipakai
+     (untuk fungsi yang verify_jwt-nya dimatikan). */
+  async fn(name, body) {
+    const c = SB.cfg();
+    if (!c.url || !c.key) throw new Error('Supabase belum dikonfigurasi.');
+    await SB.ensureToken();
+    const headers = { apikey: c.key, 'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + (SB.session ? SB.session.access : c.key) };
+    let res;
+    try { res = await fetch(c.url + '/functions/v1/' + name, { method: 'POST', headers, body: JSON.stringify(body || {}) }); }
+    catch (net) { throw new Error('Tidak dapat menghubungi Edge Function (jaringan?).'); }
+    if (!res.ok) {
+      let detail = '';
+      try { const j = await res.json(); detail = j.error || j.message || JSON.stringify(j); } catch (e) { detail = ''; }
+      throw new Error('HTTP ' + res.status + (detail ? ': ' + String(detail).slice(0, 180) : ''));
+    }
+    return res.json();
+  },
+
   /* ---------- auth ---------- */
   async signIn(email, pass) {
     const j = await SB.api('/auth/v1/token?grant_type=password', { method: 'POST', body: { email, password: pass }, noAuth: true });
@@ -3871,19 +3891,48 @@ function changePassword(e) {
   $('#pfPass').value = '';
 }
 
-/* ---------------- AI Language Assistant (DEMO) ---------------- */
+/* ---------------- AI Language Assistant ----------------
+   Tiga mode (diatur Super Admin di Settings -> AI Assistant):
+   1. DEMO  (bawaan) — jawaban simulasi lokal, tanpa kunci apa pun.
+   2. DIRECT — browser memanggil penyedia AI langsung (Gemini kuota
+      gratis / API OpenAI-compatible). Kunci tersimpan di localStorage
+      perangkat ini SAJA: tidak ikut tautan berbagi, tidak ikut
+      sinkron Supabase.
+   3. EDGE — via Supabase Edge Function "ai-chat": kunci API tinggal
+      di server (secret Supabase), otomatis aktif untuk semua member
+      Mode Online. Cara pasang: PANDUAN-AI-ONLINE.txt. */
+const AI_SYS_PROMPT = 'Anda adalah "EALC Assistant", tutor bahasa komunitas English Arabic Language Community. ' +
+  'Gaya ramah dan memotivasi; jawab dengan bahasa Indonesia santai. ' +
+  'Tugas: kosakata, grammar, terjemahan, latihan percakapan, tips speaking. ' +
+  'Untuk bahasa Arab selalu sertakan tulisan Arab + transliterasi latin; untuk bahasa Inggris sertakan contoh kalimat singkat. ' +
+  'Bila relevan, dorong pengguna merekam suara di Speaking Room, posting di Community, atau ikut Daily Challenge. ' +
+  'Jawab RINGKAS (maksimal sekitar 150 kata) kecuali diminta penjelasan detail.';
+function aiMode() {
+  const st = S.settings || {};
+  if (st.aiProvider === 'edge') {
+    if (!SB.on()) return { mode: 'demo', label: 'Demo' };
+    return { mode: 'edge', label: 'Edge Function' };
+  }
+  if (st.aiProvider === 'gemini' && st.aiApiKey) return { mode: 'gemini', label: 'Gemini · ' + (st.aiModel || 'gemini-2.0-flash') };
+  if (st.aiProvider === 'openai' && st.aiApiKey) return { mode: 'openai', label: 'API · ' + (st.aiModel || 'gpt-4o-mini') };
+  return { mode: 'demo', label: 'Demo' };
+}
 RENDERERS.ai = function (el) {
   if (!S.settings.enableAI) {
     el.innerHTML = '<div class="empty-state card"><i class="fa-solid fa-robot"></i><p>AI Assistant dinonaktifkan oleh admin.</p></div>';
     return;
   }
   if (!S.aiChat) {
-    S.aiChat = [{ role: 'bot', text: 'Hello! I am your language assistant (DEMO mode). Ask me about English or Arabic — vocabulary, grammar tips, or a phrase translation. Type "contoh: apa arti kitab?"' }];
+    S.aiChat = [{ role: 'bot', text: 'Hello! I am your language assistant. Ask me about English or Arabic — vocabulary, grammar tips, or a phrase translation. Type "contoh: apa arti kitab?"' }];
   }
+  const m = aiMode();
+  const badge = m.mode === 'demo'
+    ? '<span class="chip chip-gold">DEMO</span> — jawaban disimulasikan lokal. Super Admin dapat mengaktifkan AI online di <strong>Settings → AI Assistant</strong> (Gemini gratis, API lain, atau Supabase Edge Function).'
+    : '<span class="chip active">ONLINE · ' + esc(m.label) + '</span> — jawaban dari model AI sungguhan.';
   el.innerHTML = `
     <div class="page-head">
       <h2><i class="fa-solid fa-robot"></i> AI Language Assistant</h2>
-      <p>Asisten bahasa bilingual. <span class="chip chip-gold">DEMO</span> — jawaban disimulasikan di frontend; integrasi API asli membutuhkan backend (API key tidak boleh di frontend).</p>
+      <p>Asisten bahasa bilingual. ${badge}</p>
     </div>
     <div class="card">
       <div class="ai-chat">
@@ -3906,9 +3955,9 @@ RENDERERS.ai = function (el) {
   if (box) box.scrollTop = box.scrollHeight;
 };
 function aiMsgHTML(m) {
-  return m.role === 'user'
-    ? `<div class="ai-msg user">${esc(m.text)}</div>`
-    : `<div class="ai-msg bot"><span class="demo-tag">DEMO</span><br>${esc(m.text)}</div>`;
+  if (m.role === 'user') return `<div class="ai-msg user">${esc(m.text)}</div>`;
+  const tag = m.tag || 'DEMO';
+  return `<div class="ai-msg bot"><span class="demo-tag">${tag}</span><br>${esc(m.text)}</div>`;
 }
 function aiAsk(text) {
   if (!$('#aiInput')) { nav('ai'); }
@@ -3922,13 +3971,67 @@ function sendAI(e) {
   if (!text) return;
   S.aiChat.push({ role: 'user', text });
   input.value = '';
+  const m = aiMode();
+  const tag = m.mode === 'demo' ? 'DEMO' : 'AI';
   const box = $('#aiMessages');
-  box.innerHTML = S.aiChat.map(m => aiMsgHTML(m)).join('') + '<div class="ai-msg bot" id="aiTyping"><span class="demo-tag">DEMO</span><br>Mengetik...</div>';
+  box.innerHTML = S.aiChat.map(aiMsgHTML).join('') + `<div class="ai-msg bot" id="aiTyping"><span class="demo-tag">${tag}</span><br>Mengetik...</div>`;
   box.scrollTop = box.scrollHeight;
-  setTimeout(() => {
-    S.aiChat.push({ role: 'bot', text: aiReply(text) });
-    RENDERERS.ai($('#body-ai'));
-  }, 700 + Math.random() * 600);
+  if (m.mode === 'demo') {
+    /* Jalur demo: jawaban simulasi lokal, tanpa jaringan. */
+    setTimeout(() => {
+      S.aiChat.push({ role: 'bot', text: aiReply(text) });
+      RENDERERS.ai($('#body-ai'));
+    }, 700 + Math.random() * 600);
+    return;
+  }
+  /* Jalur online: kirim riwayat singkat ke penyedia AI. Bila gagal
+     (kunci salah, kuota habis, jaringan), jawaban demo tetap muncul
+     agar fitur tidak mati — disertai pesan error di toast. */
+  const history = S.aiChat.slice(-12).map(x => ({ role: x.role, text: x.text }));
+  aiCallOnline(m, history)
+    .then((reply) => {
+      S.aiChat.push({ role: 'bot', text: reply || '(AI mengirim jawaban kosong.)', tag: 'AI' });
+      RENDERERS.ai($('#body-ai'));
+    })
+    .catch((err) => {
+      toast('error', 'AI online gagal', String((err && err.message) || err).slice(0, 140));
+      S.aiChat.push({ role: 'bot', tag: 'DEMO', text: 'Koneksi AI online gagal (' + String((err && err.message) || err).slice(0, 100) + ').\nJawaban demo: ' + aiReply(text) });
+      RENDERERS.ai($('#body-ai'));
+    });
+}
+/* Panggil penyedia AI sesuai mode aktif. history: [{role:'user'|'bot', text}]. */
+async function aiCallOnline(m, history) {
+  const st = S.settings || {};
+  if (m.mode === 'edge') {
+    const j = await SB.fn('ai-chat', { messages: history });
+    const r = j && (j.reply || (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content));
+    if (!r) throw new Error('Respons Edge Function kosong.');
+    return r;
+  }
+  if (m.mode === 'gemini') {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(st.aiModel || 'gemini-2.0-flash') + ':generateContent?key=' + encodeURIComponent(st.aiApiKey || '');
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      systemInstruction: { parts: [{ text: AI_SYS_PROMPT }] },
+      contents: history.map(h => ({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: h.text }] }))
+    }) });
+    const j = await res.json().catch(() => null);
+    if (!res.ok) throw new Error('Gemini HTTP ' + res.status + (j && j.error && j.error.message ? ': ' + String(j.error.message).slice(0, 120) : ''));
+    const parts = (j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+    const txt = parts.map(p => p.text || '').join('');
+    if (!txt) throw new Error('Gemini mengirim respons kosong / diblokir filter.');
+    return txt;
+  }
+  /* openai-compatible: OpenAI, OpenRouter, Groq, z.ai, dsb. */
+  const base = (st.aiBaseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const res2 = await fetch(base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (st.aiApiKey || '') }, body: JSON.stringify({
+    model: st.aiModel || 'gpt-4o-mini',
+    messages: [{ role: 'system', content: AI_SYS_PROMPT }].concat(history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.text })))
+  }) });
+  const j2 = await res2.json().catch(() => null);
+  if (!res2.ok) throw new Error('API HTTP ' + res2.status + (j2 && j2.error && j2.error.message ? ': ' + String(j2.error.message).slice(0, 120) : ''));
+  const txt2 = j2 && j2.choices && j2.choices[0] && j2.choices[0].message && j2.choices[0].message.content;
+  if (!txt2) throw new Error('API mengirim respons kosong.');
+  return txt2;
 }
 function aiReply(text) {
   const t = text.toLowerCase();
@@ -4115,6 +4218,25 @@ RENDERERS.settings = function (el) {
         </div>
 
         <div class="card setting-group">
+          <div class="card-title"><i class="fa-solid fa-robot"></i> AI Assistant — Mode Online</div>
+          <p class="small muted mb-2">Bawaan: <strong>Demo</strong> (jawaban simulasi lokal, tanpa kunci). Pilih penyedia di bawah agar halaman <strong>AI Language Assistant</strong> memakai model AI sungguhan.</p>
+          <form onsubmit="App.saveAI(event)">
+            <div class="form-group"><label>Penyedia AI</label>
+              <select class="form-control" id="aiProvider" onchange="App.aiPickProvider(this.value)">
+                ${[['demo', 'Demo (bawaan)'], ['gemini', 'Google Gemini — ada kuota gratis, panggilan langsung dari browser'], ['openai', 'OpenAI-compatible — OpenAI / OpenRouter / Groq / z.ai'], ['edge', 'Supabase Edge Function — untuk SEMUA member (paling aman)']].map(([v, l]) => `<option value="${v}" ${(st.aiProvider || 'demo') === v ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+            </div>
+            <div id="aiFields">${aiProviderFields(st)}</div>
+            <div class="flex" style="flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+              <button type="button" class="btn btn-ghost btn-sm" onclick="App.testAI()"><i class="fa-solid fa-plug-circle-bolt"></i> Test AI</button>
+            </div>
+          </form>
+          <div class="divider"></div>
+          <div class="warn-note"><i class="fa-solid fa-shield-halved"></i><span><strong>Keamanan kunci API:</strong> kunci tersimpan hanya di perangkat ini (localStorage) — tidak ikut tautan berbagi &amp; tidak ikut sinkron Supabase. Mode <strong>Gemini/OpenAI-compatible</strong> berarti browser tiap pengguna memakai kuota kunci Anda — pasang limit kuota di penyedia. Untuk komunitas publik, gunakan mode <strong>Supabase Edge Function</strong> (kunci tinggal di server; penerima tautan berbagi otomatis ikut mode ini). Langkah pasang: <strong>PANDUAN-AI-ONLINE.txt</strong>.</span></div>
+        </div>
+
+        <div class="card setting-group">
           <div class="card-title"><i class="fa-solid fa-sliders"></i> Fitur &amp; Gamifikasi</div>
           <div class="setting-row"><div><strong class="small">AI Assistant</strong></div>
             <label class="switch"><input type="checkbox" ${st.enableAI ? 'checked' : ''} onchange="App.toggleFeature('enableAI',this.checked)"><span class="slider"></span></label></div>
@@ -4136,6 +4258,47 @@ RENDERERS.settings = function (el) {
       </div>
     </div>`;
 };
+/* ---------------- Pengaturan AI Assistant ---------------- */
+function aiProviderFields(st) {
+  const p = (st && st.aiProvider) || 'demo';
+  if (p === 'gemini') {
+    return `<div class="form-group"><label>API key Gemini <span class="muted small">(aistudio.google.com &rarr; Get API key — tersedia kuota gratis)</span></label><input class="form-control" id="aiApiKey" type="password" placeholder="AIza..." value="${escAttr(st.aiApiKey || '')}"></div>
+      <div class="form-group"><label>Model</label><input class="form-control" id="aiModel" placeholder="gemini-2.0-flash" value="${escAttr(st.aiModel || 'gemini-2.0-flash')}"></div>`;
+  }
+  if (p === 'openai') {
+    return `<div class="form-group"><label>Base URL</label><input class="form-control" id="aiBaseUrl" placeholder="https://api.openai.com/v1" value="${escAttr(st.aiBaseUrl || 'https://api.openai.com/v1')}"></div>
+      <div class="form-group"><label>API key</label><input class="form-control" id="aiApiKey" type="password" placeholder="sk-... / key OpenRouter / Groq" value="${escAttr(st.aiApiKey || '')}"></div>
+      <div class="form-group"><label>Model</label><input class="form-control" id="aiModel" placeholder="gpt-4o-mini (atau model gratis OpenRouter)" value="${escAttr(st.aiModel || 'gpt-4o-mini')}"></div>`;
+  }
+  if (p === 'edge') {
+    return `<div class="info-note"><i class="fa-solid fa-circle-info"></i><span>Memakai Edge Function <code class="inline">ai-chat</code> di project Supabase (${escAttr(SB.cfg().url || 'belum terhubung')}). Kunci API penyedia AI disimpan sebagai secret server &mdash; tidak pernah dikirim ke browser member. Langkah deploy &amp; isi secret: <strong>PANDUAN-AI-ONLINE.txt</strong>.</span></div>`;
+  }
+  return '<div class="info-note"><i class="fa-solid fa-circle-info"></i><span>Mode demo aktif — tidak butuh kunci apa pun. Jawaban disimulasikan lokal di frontend.</span></div>';
+}
+function aiPickProvider(v) {
+  S.settings.aiProvider = v;
+  const host = document.getElementById('aiFields');
+  if (host) host.innerHTML = aiProviderFields(S.settings);
+}
+function saveAI(e) {
+  e.preventDefault();
+  const st = S.settings;
+  st.aiProvider = $('#aiProvider').value;
+  const k = $('#aiApiKey'), mdl = $('#aiModel'), burl = $('#aiBaseUrl');
+  if (k) st.aiApiKey = k.value.trim();
+  if (mdl) st.aiModel = mdl.value.trim();
+  if (burl) st.aiBaseUrl = burl.value.trim().replace(/\/+$/, '');
+  DB.set('settings', st);
+  toast('success', 'Pengaturan AI disimpan', st.aiProvider === 'demo' ? 'AI memakai mode demo (simulasi lokal).' : 'AI online: ' + st.aiProvider + (st.aiModel ? ' (' + st.aiModel + ')' : '') + ' — coba di halaman AI Assistant.');
+}
+function testAI() {
+  const m = aiMode();
+  if (m.mode === 'demo') { toast('info', 'Masih mode demo', 'Pilih penyedia AI, isi kunci, klik Save dulu — lalu Test AI.'); return; }
+  toast('info', 'Menguji AI...', 'Mengirim pesan uji ke ' + m.label + '.');
+  aiCallOnline(m, [{ role: 'user', text: 'Balas satu kalimat singkat sebagai tanda AI siap digunakan.' }])
+    .then((r) => toast('success', 'AI online siap dipakai', m.label + ' → ' + String(r).slice(0, 90)))
+    .catch((err) => toast('error', 'Test AI gagal', String((err && err.message) || err).slice(0, 140)));
+}
 function saveIdentity(e) {
   e.preventDefault();
   const st = S.settings;
@@ -4733,7 +4896,12 @@ function buildShareLink() {
   if (!c.url || !c.key) return null;
   let payload = '';
   try {
-    payload = btoa(JSON.stringify({ u: c.url, k: c.key }))
+    /* 'a' = mode AI yang ikut dibagikan ke penerima — HANYA 'edge'
+       (mode yang TIDAK memuat kunci API di sisi klien). Mode
+       gemini/openai tidak pernah dibagikan agar kunci tidak tersebar. */
+    const share = { u: c.url, k: c.key };
+    if (S.settings && S.settings.aiProvider === 'edge') share.a = 'edge';
+    payload = btoa(JSON.stringify(share))
       .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   } catch (e) { /* bukan Latin1 — tidak mungkin untuk URL/key */ }
   return payload ? location.origin + location.pathname + location.search + '#sb=' + payload : null;
@@ -4821,11 +4989,15 @@ function applyShareLinkConfig() {
       const url = String(d.u || '').replace(/\/+$/, '');
       const key = String(d.k || '');
       const same = S.settings.supabaseUrl === url && S.settings.supabaseAnonKey === key;
-      if (/^https:\/\/.+/.test(url) && key.length > 20 && !same) {
-        S.settings.supabaseUrl = url;
-        S.settings.supabaseAnonKey = key;
-        DB.set('settings', S.settings);
-        toast('success', 'Mode Online diaktifkan', 'Koneksi Supabase dimuat dari tautan berbagi.');
+      if (/^https:\/\/.+/.test(url) && key.length > 20) {
+        let changed = false;
+        if (!same) { S.settings.supabaseUrl = url; S.settings.supabaseAnonKey = key; changed = true; }
+        /* Mode AI 'edge' boleh dibawa tautan berbagi (tanpa kunci API). */
+        if (d.a === 'edge' && S.settings.aiProvider !== 'edge') { S.settings.aiProvider = 'edge'; changed = true; }
+        if (changed) {
+          DB.set('settings', S.settings);
+          toast('success', 'Mode Online diaktifkan', 'Koneksi Supabase dimuat dari tautan berbagi.' + (S.settings.aiProvider === 'edge' ? ' AI Assistant otomatis mode Edge Function.' : ''));
+        }
       }
     } catch (e) { /* tautan tidak valid — abaikan, tetap pakai mode sebelumnya */ }
   }
@@ -4895,6 +5067,7 @@ window.App = {
   updateProfile, uploadAvatar, changePassword,
   aiAsk, sendAI,
   saveIdentity, uploadLogo, resetLogo, setThemeMode, setAccent, customColor, toggleFeature, savePoints,
+  saveAI, testAI, aiPickProvider,
   saveSupabase, testSupabase, clearSupabase, shareSupabaseLink, showShareQr, exportData, importData, resetData,
   adminTab: (t) => { S.adminTab = t; renderAdminTab(); },
   adminSetRole, adminAddPointsBtn, adminAddPointsSave, adminToggleActive, adminDeleteUser, deletePostAdmin,
