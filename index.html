@@ -1653,10 +1653,10 @@ const SB = {
     let res;
     try { res = await call(); }
     catch (net) { throw new Error('Tidak dapat menghubungi Edge Function (jaringan?).'); }
-    /* HTTP 546 = isolate Edge Function kehabisan sumber daya (CPU/memori)
-       di server Supabase. Umumnya sementara (isolate hangat didaur ulang),
-       jadi dicoba SEKALI lagi otomatis setelah jeda singkat. */
-    if (res.status === 546) {
+    /* HTTP 546 = isolate kehabisan CPU/memori; 502/503 = error sementara dari
+       penyedia AI di balik fungsi (mis. Gemini penuh permintaan). Semuanya
+       umumnya sementara -> dicoba SEKALI lagi otomatis setelah jeda singkat. */
+    if (res.status === 546 || res.status === 502 || res.status === 503) {
       await new Promise(r => setTimeout(r, 900));
       try { const r2 = await call(); if (r2.status !== 546) res = r2; } catch (e) { /* pakai hasil pertama */ }
     }
@@ -3930,7 +3930,7 @@ function aiMode() {
     if (!SB.on()) return { mode: 'demo', label: 'Demo' };
     return { mode: 'edge', label: 'Edge Function' };
   }
-  if (st.aiProvider === 'gemini' && st.aiApiKey) return { mode: 'gemini', label: 'Gemini · ' + (st.aiModel || 'gemini-2.0-flash') };
+  if (st.aiProvider === 'gemini' && st.aiApiKey) return { mode: 'gemini', label: 'Gemini · ' + (st.aiModel || 'gemini-3.5-flash-lite') };
   if (st.aiProvider === 'openai' && st.aiApiKey) return { mode: 'openai', label: 'API · ' + (st.aiModel || 'gpt-4o-mini') };
   return { mode: 'demo', label: 'Demo' };
 }
@@ -4016,7 +4016,30 @@ function sendAI(e) {
       RENDERERS.ai($('#body-ai'));
     });
 }
-/* Panggil penyedia AI sesuai mode aktif. history: [{role:'user'|'bot', text}]. */
+/* Panggil penyedia AI sesuai mode aktif. history: [{role:'user'|'bot', text}].
+   Tahan gangguan: HTTP 503/500 (server penuh di sisi penyedia) dicoba ulang
+   otomatis; untuk Gemini, bila model utama terus penuh / sudah dihentikan
+   Google (404), otomatis dicoba model cadangan bawaan sebelum menyerah. */
+const GEMINI_FALLBACKS = ['gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-4-hydrogen'];
+function aiSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+async function geminiOnce(model, st, history) {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(st.aiApiKey || '');
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+    systemInstruction: { parts: [{ text: AI_SYS_PROMPT }] },
+    contents: history.map(h => ({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: h.text }] }))
+  }) });
+  const j = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = j && j.error && j.error.message ? String(j.error.message).slice(0, 120) : '';
+    const err = new Error('Gemini HTTP ' + res.status + (detail ? ': ' + detail : ''));
+    err.status = res.status;
+    throw err;
+  }
+  const parts = (j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+  const txt = parts.map(p => p.text || '').join('');
+  if (!txt) { const e = new Error('Gemini mengirim respons kosong / diblokir filter.'); e.status = 0; throw e; }
+  return txt;
+}
 async function aiCallOnline(m, history) {
   const st = S.settings || {};
   if (m.mode === 'edge') {
@@ -4026,24 +4049,37 @@ async function aiCallOnline(m, history) {
     return r;
   }
   if (m.mode === 'gemini') {
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(st.aiModel || 'gemini-2.0-flash') + ':generateContent?key=' + encodeURIComponent(st.aiApiKey || '');
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      systemInstruction: { parts: [{ text: AI_SYS_PROMPT }] },
-      contents: history.map(h => ({ role: h.role === 'user' ? 'user' : 'model', parts: [{ text: h.text }] }))
-    }) });
-    const j = await res.json().catch(() => null);
-    if (!res.ok) throw new Error('Gemini HTTP ' + res.status + (j && j.error && j.error.message ? ': ' + String(j.error.message).slice(0, 120) : ''));
-    const parts = (j && j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
-    const txt = parts.map(p => p.text || '').join('');
-    if (!txt) throw new Error('Gemini mengirim respons kosong / diblokir filter.');
-    return txt;
+    const primary = st.aiModel || 'gemini-3.5-flash-lite';
+    const models = [primary].concat(GEMINI_FALLBACKS.filter(x => x !== primary));
+    const tried = [];
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
+      tried.push(model);
+      try { return await geminiOnce(model, st, history); }
+      catch (e) {
+        const s = e.status || 0;
+        /* 400/403 (kunci salah) / 429 (kuota habis): tidak ada gunanya ganti model. */
+        if (s !== 503 && s !== 500 && s !== 404) throw e;
+        /* Model utama penuh (503/500): jeda lalu coba SEKALI lagi model yang sama. */
+        if (i === 0 && (s === 503 || s === 500)) {
+          await aiSleep(1200);
+          try { return await geminiOnce(model, st, history); }
+          catch (e2) { const s2 = e2.status || 0; if (s2 !== 503 && s2 !== 500 && s2 !== 404) throw e2; }
+        }
+        /* 404 = model tak tersedia utk kunci ini / sudah dihentikan; 503 persisten
+           = model penuh. Keduanya: lanjut ke model cadangan. */
+      }
+    }
+    throw new Error('Gemini sibuk di sisi Google (HTTP 503). Tunggu 1-2 menit lalu kirim ulang, atau ganti Model di Settings (panduan: PANDUAN-AI-ONLINE.txt bagian 503). Model dicoba: ' + tried.join(', '));
   }
   /* openai-compatible: OpenAI, OpenRouter, Groq, z.ai, dsb. */
   const base = (st.aiBaseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
-  const res2 = await fetch(base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (st.aiApiKey || '') }, body: JSON.stringify({
+  const doCall = () => fetch(base + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (st.aiApiKey || '') }, body: JSON.stringify({
     model: st.aiModel || 'gpt-4o-mini',
     messages: [{ role: 'system', content: AI_SYS_PROMPT }].concat(history.map(h => ({ role: h.role === 'user' ? 'user' : 'assistant', content: h.text })))
   }) });
+  let res2 = await doCall();
+  if (res2.status === 503 || res2.status === 500) { await aiSleep(1200); res2 = await doCall(); }
   const j2 = await res2.json().catch(() => null);
   if (!res2.ok) throw new Error('API HTTP ' + res2.status + (j2 && j2.error && j2.error.message ? ': ' + String(j2.error.message).slice(0, 120) : ''));
   const txt2 = j2 && j2.choices && j2.choices[0] && j2.choices[0].message && j2.choices[0].message.content;
@@ -4280,7 +4316,7 @@ function aiProviderFields(st) {
   const p = (st && st.aiProvider) || 'demo';
   if (p === 'gemini') {
     return `<div class="form-group"><label>API key Gemini <span class="muted small">(aistudio.google.com &rarr; Get API key — tersedia kuota gratis)</span></label><input class="form-control" id="aiApiKey" type="password" placeholder="AIza..." value="${escAttr(st.aiApiKey || '')}"></div>
-      <div class="form-group"><label>Model</label><input class="form-control" id="aiModel" placeholder="gemini-2.0-flash" value="${escAttr(st.aiModel || 'gemini-2.0-flash')}"></div>`;
+      <div class="form-group"><label>Model</label><input class="form-control" id="aiModel" placeholder="gemini-3.5-flash-lite" value="${escAttr(st.aiModel || 'gemini-3.5-flash-lite')}"><span class="muted small">Disarankan: gemini-3.5-flash-lite. Model lama gemini-2.0-flash sudah dihentikan Google &amp; gemini-2.5-flash deprecated — bila model utama penuh (503) atau tak tersedia (404), aplikasi otomatis mencoba model cadangan.</span></div>`;
   }
   if (p === 'openai') {
     return `<div class="form-group"><label>Base URL</label><input class="form-control" id="aiBaseUrl" placeholder="https://api.openai.com/v1" value="${escAttr(st.aiBaseUrl || 'https://api.openai.com/v1')}"></div>
