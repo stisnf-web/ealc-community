@@ -1649,13 +1649,30 @@ const SB = {
     await SB.ensureToken();
     const headers = { apikey: c.key, 'Content-Type': 'application/json',
       Authorization: 'Bearer ' + (SB.session ? SB.session.access : c.key) };
+    const call = () => fetch(c.url + '/functions/v1/' + name, { method: 'POST', headers, body: JSON.stringify(body || {}) });
     let res;
-    try { res = await fetch(c.url + '/functions/v1/' + name, { method: 'POST', headers, body: JSON.stringify(body || {}) }); }
+    try { res = await call(); }
     catch (net) { throw new Error('Tidak dapat menghubungi Edge Function (jaringan?).'); }
+    /* HTTP 546 = isolate Edge Function kehabisan sumber daya (CPU/memori)
+       di server Supabase. Umumnya sementara (isolate hangat didaur ulang),
+       jadi dicoba SEKALI lagi otomatis setelah jeda singkat. */
+    if (res.status === 546) {
+      await new Promise(r => setTimeout(r, 900));
+      try { const r2 = await call(); if (r2.status !== 546) res = r2; } catch (e) { /* pakai hasil pertama */ }
+    }
     if (!res.ok) {
       let detail = '';
-      try { const j = await res.json(); detail = j.error || j.message || JSON.stringify(j); } catch (e) { detail = ''; }
-      throw new Error('HTTP ' + res.status + (detail ? ': ' + String(detail).slice(0, 180) : ''));
+      try {
+        const t = await res.text();
+        try { const j = JSON.parse(t); detail = j.error || j.message || j.details || t; } catch (pe) { detail = t; }
+      } catch (e) { detail = ''; }
+      detail = String(detail).trim().slice(0, 160);
+      let hint = '';
+      if (res.status === 546) hint = 'Server Supabase kehabisan CPU/memori saat menjalankan fungsi. Biasanya sementara — kirim ulang. Bila terus berulang: pastikan kode fungsi persis contoh (tanpa library tambahan) dan cek tab Logs di dashboard Supabase.';
+      else if (res.status === 404) hint = 'Fungsi "' + name + '" belum ditemukan di project — deploy dulu (PANDUAN-AI-ONLINE.txt, CARA 3).';
+      else if (res.status === 401 || res.status === 403) hint = 'Akses fungsi ditolak — pastikan Anda login Mode Online, atau set verify_jwt = false pada fungsi.';
+      else if (res.status === 504) hint = 'Fungsi melebihi batas waktu (timeout).';
+      throw new Error('HTTP ' + res.status + (hint ? ' — ' + hint : (detail ? ': ' + detail : '')));
     }
     return res.json();
   },
@@ -3994,8 +4011,8 @@ function sendAI(e) {
       RENDERERS.ai($('#body-ai'));
     })
     .catch((err) => {
-      toast('error', 'AI online gagal', String((err && err.message) || err).slice(0, 140));
-      S.aiChat.push({ role: 'bot', tag: 'DEMO', text: 'Koneksi AI online gagal (' + String((err && err.message) || err).slice(0, 100) + ').\nJawaban demo: ' + aiReply(text) });
+      toast('error', 'AI online gagal', String((err && err.message) || err).slice(0, 190));
+      S.aiChat.push({ role: 'bot', tag: 'DEMO', text: 'Koneksi AI online gagal (' + String((err && err.message) || err).slice(0, 160) + ').\nJawaban demo: ' + aiReply(text) });
       RENDERERS.ai($('#body-ai'));
     });
 }
